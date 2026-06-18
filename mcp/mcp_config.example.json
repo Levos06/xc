@@ -1,0 +1,13 @@
+{
+  "//": "Drop this into Cursor (Settings > MCP) or Claude Desktop's claude_desktop_config.json. Adjust the absolute paths.",
+  "mcpServers": {
+    "xc-tools": {
+      "command": "/Users/you/Desktop/xc-ecosystem/core/.venv/bin/python",
+      "args": ["-m", "xc_mcp.server"],
+      "env": {
+        "PYTHONPATH": "/Users/you/Desktop/xc-ecosystem/mcp:/Users/you/Desktop/xc-ecosystem/core",
+        "ANTHROPIC_API_KEY": "sk-ant-...optional, enables the LLM judge..."
+      }
+    }
+  }
+}

@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+build/
+dist/
+
+# Node / VS Code extension
+node_modules/
+out/
+out-test/
+*.vsix

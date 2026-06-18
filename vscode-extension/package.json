@@ -1,0 +1,64 @@
+{
+  "name": "explained-code",
+  "displayName": "Explained Code (.xc)",
+  "description": "Split-view editor and isolated git diff for the .xc (Explained Code) Markdown-First format.",
+  "version": "1.0.0",
+  "publisher": "xc-ecosystem",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Programming Languages", "Other"],
+  "main": "./out/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "languages": [
+      {
+        "id": "xc",
+        "aliases": ["Explained Code", "xc"],
+        "extensions": [".xc"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "customEditors": [
+      {
+        "viewType": "xc.splitView",
+        "displayName": "Explained Code Split View",
+        "selector": [{ "filenamePattern": "*.xc" }],
+        "priority": "default"
+      }
+    ],
+    "commands": [
+      {
+        "command": "xc.diffCode",
+        "title": "XC: Diff Code Layer (HEAD ↔ working)"
+      },
+      {
+        "command": "xc.diffExplanation",
+        "title": "XC: Diff Explanation Layer (HEAD ↔ working)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        { "command": "xc.diffCode", "when": "resourceExtname == .xc", "group": "navigation" },
+        { "command": "xc.diffExplanation", "when": "resourceExtname == .xc", "group": "navigation" }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node",
+    "watch": "npm run compile -- --watch",
+    "typecheck": "tsc --noEmit",
+    "test:parser": "tsc -p tsconfig.test.json && node out-test/parser.test.js",
+    "vscode:prepublish": "npm run compile"
+  },
+  "dependencies": {
+    "markdown-it": "^14.1.0"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.4.0"
+  }
+}
