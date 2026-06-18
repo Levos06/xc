@@ -5,14 +5,20 @@ Abstracts the physical `.xc` file into a developer-friendly experience.
 ## Features
 
 - **Split view custom editor** for `*.xc`:
-  - **Left:** pure executable code in an editable pane, target-language aware.
-    Edits are spliced back into the `.xc` document without disturbing any
-    explanation line (the code's byte range — and hash — only changes when you
-    actually change code).
-  - **Right:** rendered Markdown explanations, architectural context and
-    checklists.
-- **Focus sync:** moving the caret into a code block highlights and scrolls the
-  matching `# [EXPLANATION: <block_id>]` section into view.
+  - **Left:** pure executable code in an editable pane with **syntax
+    highlighting** (highlight.js). Edits are spliced back into the `.xc`
+    document without disturbing any explanation line — the code's byte range
+    and hash only change when you actually change code.
+  - **Right:** rendered Markdown explanations with tables, checklists and
+    **LaTeX math** (`$inline$` / `$$display$$`, rendered to MathML via Temml).
+  - **Resizable divider** (drag the gutter); width and pane order are
+    remembered per file.
+  - **Swap sides** via the ⇄ icon on the divider.
+- **Smooth two-way scroll sync:** scrolling either pane drives the other
+  continuously. Code-block starts and their explanation sections are treated as
+  anchor points and the scroll position is linearly interpolated between them,
+  so the panes track each other smoothly instead of snapping. The active block
+  is highlighted. A driver-election guard prevents feedback loops.
 - **Isolated git diff:** `XC: Diff Code Layer` and `XC: Diff Explanation Layer`
   open VS Code's native diff over a single layer (HEAD ↔ working), so prose
   edits never create code-review noise.

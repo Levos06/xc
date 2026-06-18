@@ -211,19 +211,59 @@ export function codeViews(res: ParseResult): CodeView[] {
 }
 
 /**
+ * Longest-common-subsequence line matching. Returns pairs [i, j] of matched
+ * indices (a[i] === b[j]) in increasing order. O(n*m) — fine for source files.
+ */
+function lcsMatches(a: string[], b: string[]): Array<[number, number]> {
+  const n = a.length;
+  const m = b.length;
+  // dp[i][j] = LCS length of a[i:] and b[j:].
+  const dp: Int32Array[] = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j]
+        ? dp[i + 1][j + 1] + 1
+        : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const pairs: Array<[number, number]> = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) {
+      pairs.push([i, j]);
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      i++;
+    } else {
+      j++;
+    }
+  }
+  return pairs;
+}
+
+/**
  * Replace the flattened code (as edited in the left pane) back into the
- * document, distributing lines across the existing CODE blocks in order while
- * leaving every EXPLANATION and fence line untouched.
+ * document, distributing lines across the existing CODE blocks while leaving
+ * every EXPLANATION and fence line untouched.
  *
- * For the MVP we support the common single-code-block case losslessly, and
- * multi-block by re-splitting on the original block sizes only when the line
- * count is unchanged; otherwise all code is written into the first block.
+ * The mapping is computed by diffing the OLD flattened code against the new
+ * one (LCS at line granularity): kept lines stay in their block, inserted
+ * lines join the block of the preceding line, deleted lines vanish from their
+ * block. This means a local edit only ever grows/shrinks the block it happened
+ * in — code never collapses into the first block, no matter how the line count
+ * changes. Blocks may legitimately become empty.
  */
 export function spliceCode(text: string, newCode: string): string {
   const res = parse(text);
   const blocks = codeBlocks(res);
   const lines = [...res.lines];
-  const newLines = newCode.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n$/, "").split("\n");
+  const newLines = newCode
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\n$/, "")
+    .split("\n");
 
   if (blocks.length === 0) return text;
 
@@ -233,27 +273,43 @@ export function spliceCode(text: string, newCode: string): string {
     return lines.join("\n");
   }
 
-  // Multi-block: only re-distribute safely if sizes are unchanged.
-  const origTotal = blocks.reduce((n, b) => n + (b.bodyEnd - b.bodyStart), 0);
-  if (newLines.length === origTotal) {
-    // Splice from the last block backwards so earlier indices stay valid.
-    let cursor = 0;
-    const slices: string[][] = blocks.map((b) => {
-      const n = b.bodyEnd - b.bodyStart;
-      const s = newLines.slice(cursor, cursor + n);
-      cursor += n;
-      return s;
-    });
-    for (let k = blocks.length - 1; k >= 0; k--) {
-      const b = blocks[k];
-      lines.splice(b.bodyStart, b.bodyEnd - b.bodyStart, ...slices[k]);
+  // Old flattened code + an owner map: which block each old line belongs to.
+  const oldFlat: string[] = [];
+  const owner: number[] = [];
+  blocks.forEach((b, k) => {
+    for (let t = b.bodyStart; t < b.bodyEnd; t++) {
+      oldFlat.push(res.lines[t]);
+      owner.push(k);
     }
-    return lines.join("\n");
+  });
+
+  // Guard against pathological cost on huge files: fall back to proportional
+  // split (still per-block, never an all-into-first dump).
+  const buckets: string[][] = blocks.map(() => []);
+  if (oldFlat.length * newLines.length > 4_000_000) {
+    const ratio = blocks.length / Math.max(1, newLines.length);
+    newLines.forEach((ln, j) => {
+      const k = Math.min(blocks.length - 1, Math.floor(j * ratio));
+      buckets[k].push(ln);
+    });
+  } else {
+    const assign = new Array<number>(newLines.length).fill(-1);
+    for (const [i, j] of lcsMatches(oldFlat, newLines)) {
+      assign[j] = owner[i];
+    }
+    // Forward-fill inserted lines into the preceding line's block (default 0).
+    let last = 0;
+    for (let j = 0; j < newLines.length; j++) {
+      if (assign[j] === -1) assign[j] = last;
+      else last = assign[j];
+      buckets[assign[j]].push(newLines[j]);
+    }
   }
 
-  // Fallback: dump all code into the first block (rare; line count changed
-  // across a multi-block file). Keeps data; user can re-split manually.
-  const first = blocks[0];
-  lines.splice(first.bodyStart, first.bodyEnd - first.bodyStart, ...newLines);
+  // Splice from the last block backwards so earlier indices stay valid.
+  for (let k = blocks.length - 1; k >= 0; k--) {
+    const b = blocks[k];
+    lines.splice(b.bodyStart, b.bodyEnd - b.bodyStart, ...buckets[k]);
+  }
   return lines.join("\n");
 }

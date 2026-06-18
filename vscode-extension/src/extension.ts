@@ -25,6 +25,27 @@ import {
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
 
+// LaTeX math support: $inline$ and $$display$$ rendered to MathML via Temml
+// (no web-font assets needed, so it works offline inside a webview).
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const texmath = require("markdown-it-texmath");
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const temml = require("temml");
+  md.use(texmath, {
+    engine: {
+      renderToString: (tex: string, opts: any) =>
+        temml.renderToString(tex, {
+          displayMode: !!(opts && opts.displayMode),
+          throwOnError: false,
+        }),
+    },
+    delimiters: "dollars",
+  });
+} catch {
+  // Math rendering is optional; prose still renders without it.
+}
+
 export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.window.registerCustomEditorProvider(
@@ -51,7 +72,10 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
     document: vscode.TextDocument,
     panel: vscode.WebviewPanel
   ): Promise<void> {
-    panel.webview.options = { enableScripts: true };
+    panel.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, "media")],
+    };
     panel.webview.html = this.html(panel.webview);
 
     let updatingFromWebview = false;
@@ -74,7 +98,8 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
       panel.webview.postMessage({
         type: "doc",
         code: extract(text),
-        codeLang: res.frontmatterText.match(/language:\s*"?([\w+#-]+)"?/)?.[1] || "plaintext",
+        codeLang: (res.frontmatterText.match(/language:\s*"?([\w+#-]+)"?/)?.[1]
+          || blocks[0]?.fenceLang || "plaintext").toLowerCase(),
         explanationHtml,
         views: codeViews(res),
         blockIds: blocks.map((b) => b.blockId),
@@ -110,9 +135,12 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
 
   private html(webview: vscode.Webview): string {
     const nonce = String(Date.now()) + Math.floor(Math.random() * 1e6);
+    const scriptUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, "media", "webview.bundle.js")
+    );
     const csp =
       `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; ` +
-      `script-src 'nonce-${nonce}';`;
+      `font-src ${webview.cspSource}; script-src 'nonce-${nonce}' ${webview.cspSource};`;
     return /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -120,90 +148,114 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
 <meta http-equiv="Content-Security-Policy" content="${csp}">
 <style>
   :root { color-scheme: light dark; }
-  body { margin: 0; height: 100vh; font-family: var(--vscode-font-family); color: var(--vscode-foreground); }
-  .wrap { display: grid; grid-template-columns: 1fr 6px 1fr; height: 100vh; }
-  .pane { overflow: auto; height: 100vh; }
-  .gutter { background: var(--vscode-panel-border); }
-  .code-pane textarea {
-    width: 100%; height: 100%; box-sizing: border-box; border: 0; resize: none;
-    background: var(--vscode-editor-background); color: var(--vscode-editor-foreground);
+  body { margin: 0; height: 100vh; display: flex; flex-direction: column;
+         font-family: var(--vscode-font-family); color: var(--vscode-foreground); }
+
+  .wrap { display: grid; grid-template-columns: 1fr 8px 1fr; flex: 1 1 auto; min-height: 0; }
+  .slot { overflow: hidden; min-width: 0; height: 100%; display: flex; }
+  .gutter { position: relative; cursor: col-resize; background: var(--vscode-panel-border);
+            transition: background .1s; }
+  .gutter:hover, .gutter.dragging { background: var(--vscode-focusBorder, #007fd4); }
+  .swap-btn {
+    position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+    width: 26px; height: 26px; border-radius: 50%; padding: 0; z-index: 5; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; font-size: 14px; line-height: 1;
+    color: var(--vscode-foreground);
+    background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+    border: 1px solid var(--vscode-panel-border); box-shadow: 0 1px 4px rgba(0,0,0,.25);
+  }
+  .swap-btn:hover { background: var(--vscode-toolbar-hoverBackground);
+                    border-color: var(--vscode-focusBorder, #007fd4); }
+
+  /* ---- left: syntax-highlighted editor (transparent textarea over <pre>) ---- */
+  .code-pane { position: relative; flex: 1 1 auto; min-width: 0;
+               background: var(--vscode-editor-background); }
+  .editor { position: absolute; inset: 0; }
+  .editor pre.hl, .editor textarea {
+    margin: 0; border: 0; box-sizing: border-box; position: absolute; inset: 0;
+    width: 100%; height: 100%; padding: 12px; tab-size: 4;
     font-family: var(--vscode-editor-font-family, monospace);
-    font-size: var(--vscode-editor-font-size, 13px); padding: 12px; tab-size: 4;
-    outline: none; line-height: 1.5;
+    font-size: var(--vscode-editor-font-size, 13px); line-height: 1.5; letter-spacing: 0;
+    white-space: pre;
   }
-  .doc-pane { padding: 0 20px; background: var(--vscode-editor-background); }
-  .xc-block { padding: 8px 0; border-bottom: 1px solid var(--vscode-panel-border); scroll-margin-top: 12px; }
-  .xc-block.active { background: var(--vscode-editor-selectionHighlightBackground); border-radius: 6px; }
+  .editor pre.hl { overflow: hidden; z-index: 0; pointer-events: none;
+                   color: var(--vscode-editor-foreground); }
+  .editor pre.hl code { font: inherit; white-space: pre; display: block; }
+  .editor textarea {
+    z-index: 1; resize: none; outline: none; overflow: auto;
+    background: transparent; color: transparent;
+    caret-color: var(--vscode-editor-foreground);
+  }
+  .editor textarea::selection { background: var(--vscode-editor-selectionBackground, #264f78); }
+
+  /* highlight.js token palette (VS Code Dark+ flavoured) */
+  .hljs-comment, .hljs-quote, .hljs-doctag { color: #6a9955; font-style: italic; }
+  .hljs-keyword, .hljs-literal, .hljs-selector-tag, .hljs-built_in { color: #569cd6; }
+  .hljs-string, .hljs-meta .hljs-string { color: #ce9178; }
+  .hljs-number, .hljs-symbol { color: #b5cea8; }
+  .hljs-title, .hljs-name, .hljs-title.function_ { color: #dcdcaa; }
+  .hljs-attr, .hljs-attribute, .hljs-variable, .hljs-params, .hljs-template-variable { color: #9cdcfe; }
+  .hljs-type, .hljs-title.class_ { color: #4ec9b0; }
+  .hljs-meta, .hljs-meta .hljs-keyword { color: #c586c0; }
+
+  /* ---- right: rendered explanations ---- */
+  .doc-pane { flex: 1 1 auto; min-width: 0; overflow: auto; padding: 12px 16px;
+              background: var(--vscode-editor-background); }
+  .xc-block {
+    padding: 12px 20px; margin: 0 0 12px; border-radius: 8px;
+    border: 1px solid transparent; scroll-margin-top: 12px; cursor: pointer;
+  }
+  .xc-block:hover { border-color: var(--vscode-panel-border); }
+  .xc-block.active {
+    background: var(--vscode-editor-selectionHighlightBackground, #2a2d2e);
+    border-color: var(--vscode-focusBorder, #007fd4);
+  }
   .xc-block-id {
-    font: 600 11px var(--vscode-font-family); letter-spacing: .04em; text-transform: uppercase;
-    opacity: .6; margin: 6px 0 2px;
+    font: 600 11px var(--vscode-font-family); letter-spacing: .05em; text-transform: uppercase;
+    opacity: .55; margin: 2px 0 8px;
   }
-  .doc-pane code { background: var(--vscode-textCodeBlock-background); padding: 1px 4px; border-radius: 3px; }
-  .doc-pane pre { background: var(--vscode-textCodeBlock-background); padding: 10px; border-radius: 6px; overflow:auto; }
-  .errbar { background: var(--vscode-inputValidation-errorBackground, #80202055); color: var(--vscode-foreground);
-            padding: 4px 12px; font-size: 12px; }
+  .xc-block > :first-of-type { margin-top: 0; }
+  .xc-block h1, .xc-block h2, .xc-block h3 { margin: 14px 0 6px; line-height: 1.25; }
+  .doc-pane code { background: var(--vscode-textCodeBlock-background); padding: 1px 5px; border-radius: 3px; }
+  .doc-pane pre { background: var(--vscode-textCodeBlock-background); padding: 10px 12px; border-radius: 6px; overflow: auto; }
+  .doc-pane pre code { background: none; padding: 0; }
+  .doc-pane table { border-collapse: collapse; margin: 8px 0; }
+  .doc-pane th, .doc-pane td { border: 1px solid var(--vscode-panel-border); padding: 4px 10px; text-align: left; }
+  .doc-pane blockquote { margin: 8px 0; padding: 4px 12px; opacity: .85;
+                         border-left: 3px solid var(--vscode-focusBorder, #007fd4); }
+  /* MathML (Temml) */
+  .doc-pane math { font-size: 1.06em; }
+  .doc-pane eqn, .doc-pane .eqn, .doc-pane math[display="block"] {
+    display: block; margin: 10px 0; overflow-x: auto; }
+
+  .errbar { flex: 0 0 auto; padding: 3px 12px; font-size: 12px;
+            color: var(--vscode-errorForeground, #e55);
+            background: var(--vscode-inputValidation-errorBackground, transparent);
+            border-top: 1px solid var(--vscode-panel-border); }
   .errbar:empty { display: none; }
 </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="pane code-pane"><textarea id="code" spellcheck="false"></textarea></div>
-    <div class="gutter"></div>
-    <div class="pane doc-pane"><div id="errbar" class="errbar"></div><div id="doc"></div></div>
+  <div class="wrap" id="wrap">
+    <div class="slot" id="slotLeft">
+      <div id="codePane" class="code-pane">
+        <div class="editor">
+          <pre id="hlpre" class="hl" aria-hidden="true"><code id="hl" class="hljs"></code></pre>
+          <textarea id="code" spellcheck="false" autocapitalize="off"
+                    autocomplete="off" autocorrect="off" wrap="off"></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="gutter" id="gutter">
+      <button id="swap" class="swap-btn" title="Поменять стороны" aria-label="Поменять стороны">&#8646;</button>
+    </div>
+    <div class="slot" id="slotRight">
+      <div id="docPane" class="doc-pane"><div id="doc"></div></div>
+    </div>
   </div>
-  <script nonce="${nonce}">
-    const vscode = acquireVsCodeApi();
-    const codeEl = document.getElementById('code');
-    const docEl = document.getElementById('doc');
-    const errEl = document.getElementById('errbar');
-    let views = [];
-    let debounce;
+  <div id="errbar" class="errbar"></div>
 
-    function lineOfCaret() {
-      const upto = codeEl.value.slice(0, codeEl.selectionStart);
-      return upto.split('\\n').length - 1;
-    }
-    function blockForLine(line) {
-      let chosen = null;
-      for (const v of views) { if (line >= v.flatStartLine) chosen = v; }
-      return chosen ? chosen.blockId : null;
-    }
-    function syncFocus() {
-      const id = blockForLine(lineOfCaret());
-      let target = null;
-      document.querySelectorAll('.xc-block').forEach(el => {
-        const match = el.getAttribute('data-block-id') === id;
-        el.classList.toggle('active', match);
-        if (match) target = el;
-      });
-      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }
-
-    codeEl.addEventListener('input', () => {
-      clearTimeout(debounce);
-      debounce = setTimeout(() => {
-        vscode.postMessage({ type: 'editCode', code: codeEl.value });
-      }, 300);
-    });
-    codeEl.addEventListener('keyup', syncFocus);
-    codeEl.addEventListener('click', syncFocus);
-
-    window.addEventListener('message', (e) => {
-      const m = e.data;
-      if (m.type !== 'doc') return;
-      // Preserve caret across external updates.
-      const pos = codeEl.selectionStart;
-      if (codeEl.value !== m.code) codeEl.value = m.code;
-      try { codeEl.setSelectionRange(pos, pos); } catch {}
-      docEl.innerHTML = m.explanationHtml;
-      views = m.views || [];
-      errEl.textContent = (m.errors && m.errors.length)
-        ? '⚠ ' + m.errors.join('; ') : '';
-      syncFocus();
-    });
-
-    vscode.postMessage({ type: 'ready' });
-  </script>
+  <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
   }
