@@ -162,6 +162,10 @@ def verify_token(token: str, now: float | None = None) -> bool:
 - Неизвестный пользователь обрабатывается так же, как известный (не раскрываем,
   существует ли аккаунт — анти-enumeration).
 
+## Описание выделенного фрагмента
+
+Опишите здесь
+
 # [CODE: rate_limiter]
 ```python
 WINDOW = 300  # окно блокировки, сек
@@ -213,6 +217,10 @@ login(user, pass)
 - [x] Единая ветка отказа (нельзя по тайму различить «нет юзера» и «неверный пароль»).
 - [ ] TODO: вынести хранилище в БД.
 
+## Описание выделенного фрагмента
+
+Опишите здесь
+
 # [CODE: user_store]
 ```python
 @dataclass
@@ -240,6 +248,11 @@ def login(username: str, password: str, now: float | None = None) -> str | None:
     record_success(username)
     return issue_token(username, now)
 ```
+
+# [EXPLANATION: note_1]
+## Новый блок
+
+Опишите здесь… ирощи
 
 # [EXPLANATION: demo_main]
 ## ▶️ Демонстрация

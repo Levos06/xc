@@ -313,3 +313,140 @@ export function spliceCode(text: string, newCode: string): string {
   }
   return lines.join("\n");
 }
+
+function splitLines(s: string): string[] {
+  return s.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+}
+
+/**
+ * Replace the prose body of EXPLANATION block `blockId`. The heading and every
+ * CODE line stay byte-identical (same guarantee as the MCP tool).
+ */
+export function setExplanationBody(text: string, blockId: string, newBody: string): string {
+  const res = parse(text);
+  const lines = [...res.lines];
+  const b = res.blocks.find((x) => x.kind === "EXPLANATION" && x.blockId === blockId);
+  if (!b) throw new Error(`no EXPLANATION block '${blockId}'`);
+  const before = lines.slice(0, b.bodyStart);
+  const after = lines.slice(b.bodyEnd);
+  let mid = splitLines(newBody);
+  // Keep a blank separator before the next heading.
+  if (after.length && (mid.length === 0 || mid[mid.length - 1].trim() !== "")) {
+    mid = [...mid, ""];
+  }
+  return [...before, ...mid, ...after].join("\n");
+}
+
+/**
+ * Insert a brand-new EXPLANATION block. If `beforeBlockId` names an existing
+ * EXPLANATION block, the new one is placed just before its heading; if null,
+ * the block is appended at the end of the document. Used by the "+" affordance
+ * between blocks. The new block has no paired CODE (a free-standing note).
+ */
+export function insertExplanationBefore(
+  text: string,
+  beforeBlockId: string | null,
+  newId: string,
+  markdown: string
+): string {
+  const res = parse(text);
+  const lines = [...res.lines];
+  const block = [`# [EXPLANATION: ${newId}]`, ...splitLines(markdown), ""];
+
+  if (beforeBlockId == null) {
+    let end = lines.length;
+    while (end > 0 && lines[end - 1].trim() === "") end--;
+    return [...lines.slice(0, end), "", ...block].join("\n");
+  }
+  const b = res.blocks.find((x) => x.kind === "EXPLANATION" && x.blockId === beforeBlockId);
+  if (!b) throw new Error(`no EXPLANATION block '${beforeBlockId}'`);
+  const at = b.headingLine;
+  return [...lines.slice(0, at), ...block, ...lines.slice(at)].join("\n");
+}
+
+/**
+ * Rename a block id everywhere it appears — both the EXPLANATION heading and
+ * its paired CODE heading — so the explanation/code anchor link is preserved.
+ */
+export function renameBlockId(text: string, oldId: string, newId: string): string {
+  const res = parse(text);
+  const lines = [...res.lines];
+  for (const b of res.blocks) {
+    if (b.blockId === oldId) {
+      lines[b.headingLine] = `# [${b.kind}: ${newId}]`;
+    }
+  }
+  return lines.join("\n");
+}
+
+export interface DescribeResult {
+  ok: boolean;
+  message?: string;
+  mode?: "subblock" | "separate";
+  blockId?: string;
+  text?: string;
+}
+
+/**
+ * Attach a description to a code selection (flat code-line range [startFlat,
+ * endFlat), end-exclusive).
+ *
+ * - The selection must lie within a single CODE block (its anchor is obvious:
+ *   that block's id).
+ * - If that block already has an EXPLANATION, the description is appended as a
+ *   sub-section of it (a "subblock").
+ * - If the block is an orphan (code with no matching EXPLANATION), a new
+ *   EXPLANATION is created for it, anchored by the same block id.
+ */
+export function describeSelection(
+  text: string,
+  startFlat: number,
+  endFlat: number,
+  markdown: string
+): DescribeResult {
+  const res = parse(text);
+  const views = codeViews(res);
+  let container: { blockId: string; flatStartLine: number; lineCount: number } | null = null;
+  for (const v of views) {
+    const lo = v.flatStartLine;
+    const hi = v.flatStartLine + v.lineCount;
+    if (startFlat >= lo && endFlat <= hi) {
+      container = v;
+      break;
+    }
+  }
+  if (!container) {
+    return { ok: false, message: "Выделите код в пределах одного блока кода." };
+  }
+
+  const expl = res.blocks.find(
+    (x) => x.kind === "EXPLANATION" && x.blockId === container!.blockId
+  );
+  if (expl) {
+    const body = res.lines
+      .slice(expl.bodyStart, expl.bodyEnd)
+      .join("\n")
+      .replace(/\s+$/, "");
+    const newBody = body + "\n\n" + markdown;
+    return {
+      ok: true,
+      mode: "subblock",
+      blockId: container.blockId,
+      text: setExplanationBody(text, container.blockId, newBody),
+    };
+  }
+
+  // Orphan code block: create its EXPLANATION right before the CODE heading.
+  const codeBlock = res.blocks.find(
+    (x) => x.kind === "CODE" && x.blockId === container!.blockId
+  )!;
+  const lines = [...res.lines];
+  const at = codeBlock.headingLine;
+  const block = [`# [EXPLANATION: ${container.blockId}]`, ...splitLines(markdown), ""];
+  return {
+    ok: true,
+    mode: "separate",
+    blockId: container.blockId,
+    text: [...lines.slice(0, at), ...block, ...lines.slice(at)].join("\n"),
+  };
+}
