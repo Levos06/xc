@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xc-mcp"
+version = "1.0.0"
+description = "MCP tools for autonomous agents working with .xc (Explained Code) files."
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.2.0",
+    "xc-cli",
+]
+
+[project.optional-dependencies]
+judge = ["anthropic>=0.40.0"]
+test = ["pytest>=7.0"]
+
+[project.scripts]
+xc-mcp = "xc_mcp.server:main"
+
+[tool.setuptools]
+packages = ["xc_mcp"]

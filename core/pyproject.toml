@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xc-cli"
+version = "1.0.0"
+description = "Core library and CLI for the .xc (Explained Code) Markdown-First format."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+[project.scripts]
+xc-cli = "xc.cli:main"
+
+[tool.setuptools]
+packages = ["xc"]
