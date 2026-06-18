@@ -11,3 +11,8 @@ node_modules/
 out/
 out-test/
 *.vsix
+# ...but keep released, versioned packages
+!vscode-extension/versions/*.vsix
+
+# macOS
+.DS_Store

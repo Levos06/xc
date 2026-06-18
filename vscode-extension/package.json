@@ -2,8 +2,9 @@
   "name": "explained-code",
   "displayName": "Explained Code (.xc)",
   "description": "Split-view editor and isolated git diff for the .xc (Explained Code) Markdown-First format.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "publisher": "xc-ecosystem",
+  "repository": { "type": "git", "url": "https://github.com/Levos06/xc.git" },
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -48,7 +49,8 @@
     "compile": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node",
     "watch": "npm run compile -- --watch",
     "typecheck": "tsc --noEmit",
-    "test:parser": "tsc -p tsconfig.test.json && node out-test/parser.test.js",
+    "test:parser": "tsc -p tsconfig.test.json && node out-test/test/parser.test.js",
+    "package": "npm run compile && npx --yes @vscode/vsce package --no-dependencies --out versions/explained-code-$npm_package_version.vsix",
     "vscode:prepublish": "npm run compile"
   },
   "dependencies": {

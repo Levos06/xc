@@ -35,7 +35,7 @@ import hashlib
 import hmac
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 # --- Конфигурация (единственный источник магических чисел) ---
 TOKEN_TTL = 3600           # сек

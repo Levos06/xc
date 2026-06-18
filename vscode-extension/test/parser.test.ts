@@ -76,4 +76,32 @@ check("resilient to unclosed fence", () => {
   assert.ok(extract(truncated).includes("def x()"));
 });
 
+check("multi-block splice attributes inserted lines to the right block (no collapse)", () => {
+  // Insert a line into block A — line count CHANGES. Block B must stay put,
+  // and the new line must land in A, not collapse everything into block 1.
+  const flat = extract(SAMPLE);
+  const edited = flat.replace("    return 1\n", "    y = 1\n    return 1\n");
+  const spliced = spliceCode(SAMPLE, edited);
+  const r = parse(spliced);
+  const blocks = codeBlocks(r);
+  const aCode = r.lines.slice(blocks[0].bodyStart, blocks[0].bodyEnd).join("\n");
+  const bCode = r.lines.slice(blocks[1].bodyStart, blocks[1].bodyEnd).join("\n");
+  assert.ok(aCode.includes("y = 1"), "new line went to block A");
+  assert.ok(aCode.includes("def a()"));
+  assert.ok(!aCode.includes("def b()"), "block A must NOT swallow block B");
+  assert.strictEqual(bCode.trim(), "def b():\n    return 2", "block B intact");
+  // Round-trip: extracted code equals what the user typed.
+  assert.strictEqual(extract(spliced).trim(), edited.trim());
+});
+
+check("multi-block splice handles deletions within one block", () => {
+  const flat = extract(SAMPLE);
+  const edited = flat.replace("def a():\n    return 1\n", "def a():\n    pass\n");
+  const spliced = spliceCode(SAMPLE, edited);
+  const blocks = codeBlocks(parse(spliced));
+  const r = parse(spliced);
+  const bCode = r.lines.slice(blocks[1].bodyStart, blocks[1].bodyEnd).join("\n");
+  assert.strictEqual(bCode.trim(), "def b():\n    return 2", "block B intact after A shrinks");
+});
+
 console.log(`\n${passed} TS parser checks passed.`);
