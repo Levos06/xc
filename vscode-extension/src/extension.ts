@@ -82,6 +82,7 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
     panel.webview.html = this.html(panel.webview);
 
     let updatingFromWebview = false;
+    let pendingEdit: string | undefined;
 
     const pushToWebview = () => {
       const text = document.getText();
@@ -111,7 +112,9 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
         views: codeViews(res),
         blockIds: blocks.map((b) => b.blockId),
         errors: res.errors,
+        autoEditBlockId: pendingEdit,
       });
+      pendingEdit = undefined;
     };
 
     const changeSub = vscode.workspace.onDidChangeTextDocument((e) => {
@@ -151,6 +154,7 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
           await replaceDoc(setExplanationBody(text, msg.blockId, msg.markdown));
         } else if (msg.type === "insertBlock") {
           const id = uniqueNoteId(text);
+          pendingEdit = id;
           await replaceDoc(
             insertExplanationBefore(
               text,
@@ -169,6 +173,7 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
           if (!r.ok) {
             vscode.window.showWarningMessage(r.message || "Не удалось привязать описание.");
           } else {
+            pendingEdit = r.blockId;
             await replaceDoc(r.text!);
           }
         } else if (msg.type === "ready") {
@@ -202,7 +207,6 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
 
   /* thin top "curtain": holds the swap button above the divider */
   .curtain { position: relative; flex: 0 0 var(--curtain-h); height: var(--curtain-h);
-             border-bottom: 1px solid var(--vscode-panel-border);
              background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background)); }
   .swap-btn {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
@@ -262,12 +266,13 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
   .hljs-meta, .hljs-meta .hljs-keyword { color: #c586c0; }
 
   /* ---- right: rendered explanations — flowing, no frames ---- */
-  .doc-pane { flex: 1 1 auto; min-width: 0; overflow: auto; padding: 4px 22px 40vh; }
+  .doc-pane { flex: 1 1 auto; min-width: 0; overflow: auto; padding: 4px 18px 16px; }
   .xc-block {
-    position: relative; padding: 10px 0 10px 12px; margin: 0;
-    border-left: 2px solid transparent; scroll-margin-top: 12px;
+    position: relative; padding: 10px 12px; margin: 0;
+    border-radius: 6px; scroll-margin-top: 12px;
   }
-  .xc-block.active { border-left-color: var(--vscode-focusBorder, #007fd4); }
+  /* shown only on a code click that maps to this block */
+  .xc-block.active { background: var(--vscode-editor-selectionHighlightBackground, #2a2d2e); }
   .xc-block-id {
     font: 600 11px var(--vscode-font-family); letter-spacing: .05em; text-transform: uppercase;
     opacity: .45; margin: 2px 0 6px;
@@ -303,25 +308,28 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
 
   /* per-block edit pencil */
   .edit-btn {
-    position: absolute; top: 8px; right: 0; width: 22px; height: 22px; border-radius: 5px;
-    cursor: pointer; opacity: 0; transition: opacity .1s; padding: 0; font-size: 12px; line-height: 1;
+    position: absolute; top: 8px; right: 6px; width: 24px; height: 24px; border-radius: 5px;
+    cursor: pointer; opacity: 0; transition: opacity .1s; padding: 0;
     display: flex; align-items: center; justify-content: center;
-    color: var(--vscode-foreground); background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+    color: var(--vscode-icon-foreground, var(--vscode-foreground));
+    background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
     border: 1px solid var(--vscode-panel-border); }
+  .edit-btn svg { width: 13px; height: 13px; display: block; }
   .xc-block:hover .edit-btn { opacity: .9; }
   .edit-btn:hover { border-color: var(--vscode-focusBorder, #007fd4); }
 
-  /* "+" add-block affordance between blocks */
-  .add-zone { position: relative; height: 10px; margin: 0; }
+  /* "+" add-block affordance — centered, with a generous hover catch area */
+  .add-zone { position: relative; height: 8px; margin: 0; }
+  .add-zone .hit { position: absolute; left: 0; right: 0; top: -10px; bottom: -10px; z-index: 1; }
+  .add-zone::before { content: ""; position: absolute; top: 50%; left: 0; right: 0; height: 1px;
+                      background: var(--vscode-panel-border); opacity: 0; transition: opacity .1s; }
   .add-zone .add-btn {
-    position: absolute; top: 50%; left: 0; transform: translateY(-50%);
-    width: 20px; height: 20px; border-radius: 50%; cursor: pointer; opacity: 0;
-    display: flex; align-items: center; justify-content: center; font-size: 15px; line-height: 1;
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 2;
+    width: 22px; height: 22px; border-radius: 50%; cursor: pointer; opacity: 0;
+    display: flex; align-items: center; justify-content: center; font-size: 16px; line-height: 1;
     padding: 0; transition: opacity .1s;
     color: var(--vscode-foreground); background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
     border: 1px solid var(--vscode-panel-border); }
-  .add-zone::before { content: ""; position: absolute; top: 50%; left: 26px; right: 0; height: 1px;
-                      background: var(--vscode-panel-border); opacity: 0; transition: opacity .1s; }
   .add-zone:hover .add-btn, .add-zone:hover::before { opacity: 1; }
   .add-zone .add-btn:hover { border-color: var(--vscode-focusBorder, #007fd4); }
 

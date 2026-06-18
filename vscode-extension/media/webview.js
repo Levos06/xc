@@ -63,8 +63,12 @@ function applyOrder() {
   }
 }
 function positionSwap() {
-  const g = gutter.getBoundingClientRect();
-  swap.style.left = g.left + g.width / 2 + "px";
+  // Place the swap button exactly over the divider. Computed from the grid
+  // geometry (left fraction of the width minus the 7px gap) so it never lags
+  // behind a stale gutter measurement.
+  const r = wrap.getBoundingClientRect();
+  const x = r.left + leftFraction * (r.width - 7) + 3.5;
+  swap.style.left = x + "px";
 }
 function setSplit(f) {
   leftFraction = Math.max(0.15, Math.min(0.85, f));
@@ -184,22 +188,23 @@ function interp(x, xs, ys) {
   }
   return ys[ys.length - 1];
 }
-function activeBlockForCode(top) {
-  let id = null;
-  for (let k = 0; k < views.length; k++) {
-    if (top + 1 >= codeAnchors[k + 1] - lineHeight) id = views[k].blockId;
+// The explanation block whose CODE contains the caret line (null if the caret
+// sits in code that no block describes).
+function blockForCaret() {
+  const line = codeEl.value.slice(0, codeEl.selectionStart).split("\n").length - 1;
+  for (const v of views) {
+    if (line >= v.flatStartLine && line < v.flatStartLine + v.lineCount) return v.blockId;
   }
-  return id || (views[0] && views[0].blockId);
+  return null;
 }
 function highlight(id) {
   docPane.querySelectorAll(".xc-block").forEach(function (el) {
-    el.classList.toggle("active", el.getAttribute("data-block-id") === id);
+    el.classList.toggle("active", !!id && el.getAttribute("data-block-id") === id);
   });
 }
 function syncDocFromCode() {
   if (codeAnchors.length !== views.length + 2) recomputeAnchors();
   docPane.scrollTop = interp(codeEl.scrollTop, codeAnchors, docAnchors);
-  highlight(activeBlockForCode(codeEl.scrollTop));
 }
 function syncCodeFromDoc() {
   if (docAnchors.length !== views.length + 2) recomputeAnchors();
@@ -215,6 +220,8 @@ codePane.addEventListener("wheel", setDriver("code"), { passive: true });
 codePane.addEventListener("pointerdown", setDriver("code"));
 codeEl.addEventListener("focus", setDriver("code"));
 codeEl.addEventListener("keydown", setDriver("code"));
+// Highlight the explanation of the block the user just clicked into (only then).
+codeEl.addEventListener("click", function () { highlight(blockForCaret()); });
 docPane.addEventListener("wheel", setDriver("doc"), { passive: true });
 docPane.addEventListener("pointerdown", setDriver("doc"));
 docPane.addEventListener("scroll", function () {
@@ -277,32 +284,26 @@ function enterEdit(blk, id) {
   const cancelB = document.createElement("button");
   cancelB.className = "secondary";
   cancelB.textContent = "Отмена";
-  const hint = document.createElement("span");
-  hint.className = "xc-edit-hint";
-  hint.textContent = "⌘/Ctrl+Enter — сохранить · Esc — отмена";
   bar.appendChild(saveB);
   bar.appendChild(cancelB);
-  bar.appendChild(hint);
   if (body) body.style.display = "none";
   blk.appendChild(ta);
   blk.appendChild(bar);
   ta.focus();
   ta.style.height = Math.max(120, ta.scrollHeight + 4) + "px";
 
-  function commit() {
-    vscode.postMessage({ type: "editExplanation", blockId: id, markdown: ta.value });
-  }
   function close() {
     ta.remove();
     bar.remove();
     if (body) body.style.display = "";
   }
-  saveB.addEventListener("click", commit);
-  cancelB.addEventListener("click", close);
-  ta.addEventListener("keydown", function (ev) {
-    if (ev.key === "Escape") { ev.preventDefault(); close(); }
-    else if ((ev.metaKey || ev.ctrlKey) && ev.key === "Enter") { ev.preventDefault(); commit(); }
+  // Save always closes the editor — even when nothing changed (the host simply
+  // does nothing in that case and the rendered body returns).
+  saveB.addEventListener("click", function () {
+    vscode.postMessage({ type: "editExplanation", blockId: id, markdown: ta.value });
+    close();
   });
+  cancelB.addEventListener("click", close);
 }
 docPane.addEventListener("dblclick", function (e) {
   const blk = e.target.closest ? e.target.closest(".xc-block") : null;
@@ -310,16 +311,25 @@ docPane.addEventListener("dblclick", function (e) {
 });
 
 // ---------- add-block "+" affordances + edit pencils ----------
+const PENCIL_SVG =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" ' +
+  'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M10.8 2.4l2.8 2.8M3 13l-.6 1.6 1.6-.6 8.4-8.4-1-1z"/>' +
+  '<path d="M9.7 3.5l2.8 2.8"/></svg>';
+
 function makeAddZone(beforeBlockId) {
   const z = document.createElement("div");
   z.className = "add-zone";
+  const hit = document.createElement("div");
+  hit.className = "hit";
   const b = document.createElement("button");
   b.className = "add-btn";
   b.textContent = "+";
-  b.title = "Добавить блок";
+  b.title = "Добавить блок описания";
   b.addEventListener("click", function () {
     vscode.postMessage({ type: "insertBlock", beforeBlockId: beforeBlockId });
   });
+  z.appendChild(hit);
   z.appendChild(b);
   return z;
 }
@@ -330,7 +340,7 @@ function renderAffordances() {
     const pen = document.createElement("button");
     pen.className = "edit-btn";
     pen.title = "Редактировать описание";
-    pen.textContent = "✎";
+    pen.innerHTML = PENCIL_SVG;
     pen.addEventListener("click", function (ev) {
       ev.stopPropagation();
       enterEdit(blk, id);
@@ -359,6 +369,16 @@ window.addEventListener("message", function (e) {
   codeEl.scrollTop = top;
   hlPre.scrollTop = top;
   scheduleAnchors();
+
+  // After inserting a block or describing a selection, jump straight into
+  // editing the affected block.
+  if (m.autoEditBlockId) {
+    const blk = docEl.querySelector('[data-block-id="' + cssEsc(m.autoEditBlockId) + '"]');
+    if (blk) {
+      enterEdit(blk, m.autoEditBlockId);
+      blk.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }
 });
 
 window.addEventListener("resize", function () {
