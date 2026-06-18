@@ -48,6 +48,8 @@ let codeLang = "plaintext";
 let lineHeight = 18;
 let codeAnchors = [0];
 let docAnchors = [0];
+let splineCD = null; // code scrollTop -> doc scrollTop
+let splineDC = null; // doc scrollTop -> code scrollTop
 let driver = null; // 'code' | 'doc'
 let raf = 0;
 
@@ -209,6 +211,51 @@ function recomputeAnchors() {
   ds.push(docMax);
   codeAnchors = cs;
   docAnchors = ds;
+  splineCD = buildSpline(codeAnchors, docAnchors);
+  splineDC = buildSpline(docAnchors, codeAnchors);
+}
+
+// Monotone cubic (Fritsch–Carlson PCHIP): smooth C1 mapping through the
+// anchors that never overshoots — so scrolling stays monotonic and gentle.
+function buildSpline(xs, ys) {
+  const n = xs.length;
+  const m = new Array(n);
+  if (n < 2) { m[0] = 0; return { xs: xs, ys: ys, m: m }; }
+  const h = new Array(n - 1);
+  const d = new Array(n - 1);
+  for (let i = 0; i < n - 1; i++) {
+    h[i] = xs[i + 1] - xs[i];
+    d[i] = (ys[i + 1] - ys[i]) / h[i];
+  }
+  m[0] = d[0];
+  m[n - 1] = d[n - 2];
+  for (let i = 1; i < n - 1; i++) {
+    if (d[i - 1] * d[i] <= 0) {
+      m[i] = 0;
+    } else {
+      const w1 = 2 * h[i] + h[i - 1];
+      const w2 = h[i] + 2 * h[i - 1];
+      m[i] = (w1 + w2) / (w1 / d[i - 1] + w2 / d[i]);
+    }
+  }
+  return { xs: xs, ys: ys, m: m };
+}
+function evalSpline(sp, x) {
+  const xs = sp.xs, ys = sp.ys, m = sp.m;
+  const n = xs.length;
+  if (n < 2 || x <= xs[0]) return ys[0];
+  if (x >= xs[n - 1]) return ys[n - 1];
+  let k = 0;
+  while (k < n - 1 && x > xs[k + 1]) k++;
+  const hk = xs[k + 1] - xs[k];
+  const t = (x - xs[k]) / hk;
+  const t2 = t * t;
+  const t3 = t2 * t;
+  const h00 = 2 * t3 - 3 * t2 + 1;
+  const h10 = t3 - 2 * t2 + t;
+  const h01 = -2 * t3 + 3 * t2;
+  const h11 = t3 - t2;
+  return h00 * ys[k] + h10 * hk * m[k] + h01 * ys[k + 1] + h11 * hk * m[k + 1];
 }
 function scheduleAnchors() {
   cancelAnimationFrame(raf);
@@ -219,16 +266,6 @@ function scheduleAnchors() {
     hlPre.scrollTop = codeEl.scrollTop;
     positionSwap();
   });
-}
-function interp(x, xs, ys) {
-  if (x <= xs[0]) return ys[0];
-  for (let k = 0; k < xs.length - 1; k++) {
-    if (x <= xs[k + 1]) {
-      const t = (x - xs[k]) / (xs[k + 1] - xs[k]);
-      return ys[k] + t * (ys[k + 1] - ys[k]);
-    }
-  }
-  return ys[ys.length - 1];
 }
 // The explanation block whose CODE contains the caret line (null if the caret
 // sits in code that no block describes).
@@ -245,10 +282,10 @@ function highlight(id) {
   });
 }
 function syncDocFromCode() {
-  docPane.scrollTop = interp(codeEl.scrollTop, codeAnchors, docAnchors);
+  if (splineCD) docPane.scrollTop = evalSpline(splineCD, codeEl.scrollTop);
 }
 function syncCodeFromDoc() {
-  codeEl.scrollTop = interp(docPane.scrollTop, docAnchors, codeAnchors);
+  if (splineDC) codeEl.scrollTop = evalSpline(splineDC, docPane.scrollTop);
   hlPre.scrollTop = codeEl.scrollTop;
 }
 
@@ -309,6 +346,9 @@ function positionDescribe() {
 codeEl.addEventListener("select", positionDescribe);
 codeEl.addEventListener("keyup", positionDescribe);
 codeEl.addEventListener("mouseup", positionDescribe);
+// Fires on every caret/selection change (incl. collapsing a selection by a
+// click), so the button vanishes the instant the selection is cleared.
+document.addEventListener("selectionchange", positionDescribe);
 describeBtn.addEventListener("click", function () {
   const v = codeEl.value;
   const s = codeEl.selectionStart;
@@ -330,6 +370,8 @@ function closeAllEdits() {
     if (idr) idr.remove();
     const bar = b.querySelector(".xc-edit-bar");
     if (bar) bar.remove();
+    const chip = b.querySelector(".xc-block-id");
+    if (chip) chip.style.display = "";
     const body = b.querySelector(".xc-body");
     if (body) body.style.display = "";
   });
@@ -338,17 +380,20 @@ function enterEdit(blk, id) {
   if (blk.querySelector(".xc-edit")) return;
   closeAllEdits(); // editing another block closes the previous editor
   const body = blk.querySelector(".xc-body");
+  const idChip = blk.querySelector(".xc-block-id");
+  if (idChip) idChip.style.display = "none"; // the input replaces the title chip
 
-  // id (block name) row
+  // editable block name, styled as the title itself
   const idRow = document.createElement("div");
   idRow.className = "xc-edit-id-row";
-  const idLabel = document.createElement("label");
-  idLabel.textContent = "Имя блока";
   const idInput = document.createElement("input");
   idInput.className = "xc-edit-id";
   idInput.value = id;
   idInput.spellcheck = false;
-  idRow.appendChild(idLabel);
+  idInput.title = "Имя блока";
+  const sizeId = function () { idInput.style.width = Math.max(6, idInput.value.length + 1) + "ch"; };
+  sizeId();
+  idInput.addEventListener("input", sizeId);
   idRow.appendChild(idInput);
 
   const ta = document.createElement("textarea");
@@ -365,7 +410,7 @@ function enterEdit(blk, id) {
   bar.appendChild(cancelB);
 
   if (body) body.style.display = "none";
-  blk.appendChild(idRow);
+  blk.insertBefore(idRow, idChip || blk.firstChild); // name sits where the title was
   blk.appendChild(ta);
   blk.appendChild(bar);
   ta.focus();
@@ -375,6 +420,7 @@ function enterEdit(blk, id) {
     idRow.remove();
     ta.remove();
     bar.remove();
+    if (idChip) idChip.style.display = "";
     if (body) body.style.display = "";
   }
   // Save always closes the editor — even when nothing changed.
@@ -392,6 +438,13 @@ function enterEdit(blk, id) {
 docPane.addEventListener("dblclick", function (e) {
   const blk = e.target.closest ? e.target.closest(".xc-block") : null;
   if (blk) enterEdit(blk, blk.getAttribute("data-block-id"));
+});
+
+// Any pointer press outside the edit widget closes the open editor.
+document.addEventListener("pointerdown", function (e) {
+  const t = e.target;
+  if (t && t.closest && t.closest(".xc-edit, .xc-edit-id, .xc-edit-id-row, .xc-edit-bar")) return;
+  if (docEl.querySelector(".xc-edit")) closeAllEdits();
 });
 
 // ---------- add-block "+" affordances + edit pencils ----------

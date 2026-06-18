@@ -328,15 +328,16 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
              line-height: 1.5; padding: 8px 10px; border-radius: 6px;
              color: var(--vscode-input-foreground); background: var(--vscode-input-background);
              border: 1px solid var(--vscode-focusBorder, #007fd4); outline: none; }
-  .xc-edit-id-row { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; }
-  .xc-edit-id-row label { font: 600 11px var(--vscode-font-family); letter-spacing: .05em;
-                          text-transform: uppercase; opacity: .55; }
+  /* block-name editor — styled as the title chip itself, not a form input */
+  .xc-edit-id-row { display: flex; align-items: center; gap: 6px; margin: 2px 0 8px; }
+  .xc-edit-id-row::before { content: "#"; opacity: .35; font: 600 12px var(--vscode-editor-font-family, monospace); }
   .xc-edit-id {
-    flex: 0 0 auto; width: 200px; font-family: var(--vscode-editor-font-family, monospace);
-    font-size: 12px; padding: 3px 8px; border-radius: 5px;
-    color: var(--vscode-input-foreground); background: var(--vscode-input-background);
-    border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); outline: none; }
-  .xc-edit-id:focus { border-color: var(--vscode-focusBorder, #007fd4); }
+    font: 600 11px var(--vscode-font-family); letter-spacing: .06em; text-transform: uppercase;
+    color: var(--vscode-foreground); opacity: .65; min-width: 60px;
+    background: transparent; border: 0; border-bottom: 1px dashed var(--vscode-panel-border);
+    padding: 1px 2px; outline: none; }
+  .xc-edit-id:hover { opacity: .85; }
+  .xc-edit-id:focus { opacity: 1; border-bottom-style: solid; border-bottom-color: var(--vscode-focusBorder, #007fd4); }
   .xc-edit-bar { display: flex; gap: 6px; margin: 6px 0 0; }
   .xc-edit-bar button { font: 500 12px var(--vscode-font-family); cursor: pointer;
              padding: 3px 12px; border-radius: 4px; border: 1px solid var(--vscode-panel-border);
