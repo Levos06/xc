@@ -10,6 +10,7 @@ dist/
 node_modules/
 out/
 out-test/
+vscode-extension/media/*.bundle.js
 *.vsix
 # ...but keep released, versioned packages
 !vscode-extension/versions/*.vsix

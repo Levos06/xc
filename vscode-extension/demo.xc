@@ -66,6 +66,15 @@ SECRET_KEY = os.environ.get("SECRET_KEY", "demo-insecure-key").encode("utf-8")
 password ──salt──► PBKDF2 (120k раундов) ──► digest
 ```
 
+### Стоимость атаки перебором
+Число итераций $c = 120000$ умышленно делает один хэш дорогим. Время полного
+перебора словаря растёт линейно по $c$:
+
+$$T_{\text{attack}} \;\approx\; N \cdot c \cdot t_{\text{sha}},$$
+
+где $N$ — размер словаря кандидатов, а $t_{\text{sha}}$ — время одного раунда
+`SHA-256`. Удваивая $c$, мы удваиваем стоимость атаки, не трогая остальной код.
+
 # [CODE: password_hashing]
 ```python
 def hash_password(password: str) -> str:
@@ -98,6 +107,14 @@ def verify_password(password: str, stored: str) -> bool:
 * **Подпись HMAC** не даёт подделать `payload` без `SECRET_KEY`.
 * Поле `exp` проверяется на стороне сервера — даже валидная подпись не спасёт
   просроченный токен (**fail-closed**).
+
+### Подпись
+Подпись считается как HMAC поверх полезной нагрузки:
+
+$$\mathrm{sig} \;=\; \mathrm{HMAC}_K(m) \;=\; H\!\big((K \oplus \mathrm{opad}) \,\|\, H((K \oplus \mathrm{ipad}) \,\|\, m)\big).$$
+
+Токен считается валидным тогда и только тогда, когда
+$\mathrm{sig} = \mathrm{HMAC}_K(\text{payload})$ **и** $\exp > t_{\text{now}}$.
 
 ### Инварианты безопасности
 1. Токен **невалиден**, если истёк (`exp <= now`).

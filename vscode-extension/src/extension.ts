@@ -25,6 +25,27 @@ import {
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
 
+// LaTeX math support: $inline$ and $$display$$ rendered to MathML via Temml
+// (no web-font assets needed, so it works offline inside a webview).
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const texmath = require("markdown-it-texmath");
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const temml = require("temml");
+  md.use(texmath, {
+    engine: {
+      renderToString: (tex: string, opts: any) =>
+        temml.renderToString(tex, {
+          displayMode: !!(opts && opts.displayMode),
+          throwOnError: false,
+        }),
+    },
+    delimiters: "dollars",
+  });
+} catch {
+  // Math rendering is optional; prose still renders without it.
+}
+
 export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.window.registerCustomEditorProvider(
@@ -51,7 +72,10 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
     document: vscode.TextDocument,
     panel: vscode.WebviewPanel
   ): Promise<void> {
-    panel.webview.options = { enableScripts: true };
+    panel.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, "media")],
+    };
     panel.webview.html = this.html(panel.webview);
 
     let updatingFromWebview = false;
@@ -74,7 +98,8 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
       panel.webview.postMessage({
         type: "doc",
         code: extract(text),
-        codeLang: res.frontmatterText.match(/language:\s*"?([\w+#-]+)"?/)?.[1] || "plaintext",
+        codeLang: (res.frontmatterText.match(/language:\s*"?([\w+#-]+)"?/)?.[1]
+          || blocks[0]?.fenceLang || "plaintext").toLowerCase(),
         explanationHtml,
         views: codeViews(res),
         blockIds: blocks.map((b) => b.blockId),
@@ -110,9 +135,12 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
 
   private html(webview: vscode.Webview): string {
     const nonce = String(Date.now()) + Math.floor(Math.random() * 1e6);
+    const scriptUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, "media", "webview.bundle.js")
+    );
     const csp =
       `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; ` +
-      `script-src 'nonce-${nonce}';`;
+      `font-src ${webview.cspSource}; script-src 'nonce-${nonce}' ${webview.cspSource};`;
     return /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -122,37 +150,59 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
   :root { color-scheme: light dark; }
   body { margin: 0; height: 100vh; display: flex; flex-direction: column;
          font-family: var(--vscode-font-family); color: var(--vscode-foreground); }
-  .toolbar { display: flex; align-items: center; gap: 6px; padding: 4px 8px;
-             border-bottom: 1px solid var(--vscode-panel-border);
-             background: var(--vscode-editorGroupHeader-tabsBackground, transparent); flex: 0 0 auto; }
-  .toolbar button {
-    font: 500 12px var(--vscode-font-family); cursor: pointer;
-    color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
-    background: var(--vscode-button-secondaryBackground, transparent);
-    border: 1px solid var(--vscode-panel-border); border-radius: 4px; padding: 3px 9px;
-  }
-  .toolbar button:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-toolbar-hoverBackground)); }
-  .errbar { margin-left: auto; color: var(--vscode-errorForeground, #e55);
-            font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .errbar:empty { display: none; }
 
-  .wrap { display: grid; grid-template-columns: 1fr 7px 1fr; flex: 1 1 auto; min-height: 0; }
+  .wrap { display: grid; grid-template-columns: 1fr 8px 1fr; flex: 1 1 auto; min-height: 0; }
   .slot { overflow: hidden; min-width: 0; height: 100%; display: flex; }
-  .gutter { cursor: col-resize; background: var(--vscode-panel-border); transition: background .1s; }
+  .gutter { position: relative; cursor: col-resize; background: var(--vscode-panel-border);
+            transition: background .1s; }
   .gutter:hover, .gutter.dragging { background: var(--vscode-focusBorder, #007fd4); }
-
-  .code-pane { flex: 1 1 auto; min-width: 0; display: flex; }
-  .code-pane textarea {
-    width: 100%; height: 100%; box-sizing: border-box; border: 0; resize: none;
-    background: var(--vscode-editor-background); color: var(--vscode-editor-foreground);
-    font-family: var(--vscode-editor-font-family, monospace);
-    font-size: var(--vscode-editor-font-size, 13px); padding: 12px; tab-size: 4;
-    outline: none; line-height: 1.5; white-space: pre; overflow: auto;
+  .swap-btn {
+    position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+    width: 26px; height: 26px; border-radius: 50%; padding: 0; z-index: 5; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; font-size: 14px; line-height: 1;
+    color: var(--vscode-foreground);
+    background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+    border: 1px solid var(--vscode-panel-border); box-shadow: 0 1px 4px rgba(0,0,0,.25);
   }
+  .swap-btn:hover { background: var(--vscode-toolbar-hoverBackground);
+                    border-color: var(--vscode-focusBorder, #007fd4); }
+
+  /* ---- left: syntax-highlighted editor (transparent textarea over <pre>) ---- */
+  .code-pane { position: relative; flex: 1 1 auto; min-width: 0;
+               background: var(--vscode-editor-background); }
+  .editor { position: absolute; inset: 0; }
+  .editor pre.hl, .editor textarea {
+    margin: 0; border: 0; box-sizing: border-box; position: absolute; inset: 0;
+    width: 100%; height: 100%; padding: 12px; tab-size: 4;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: var(--vscode-editor-font-size, 13px); line-height: 1.5; letter-spacing: 0;
+    white-space: pre;
+  }
+  .editor pre.hl { overflow: hidden; z-index: 0; pointer-events: none;
+                   color: var(--vscode-editor-foreground); }
+  .editor pre.hl code { font: inherit; white-space: pre; display: block; }
+  .editor textarea {
+    z-index: 1; resize: none; outline: none; overflow: auto;
+    background: transparent; color: transparent;
+    caret-color: var(--vscode-editor-foreground);
+  }
+  .editor textarea::selection { background: var(--vscode-editor-selectionBackground, #264f78); }
+
+  /* highlight.js token palette (VS Code Dark+ flavoured) */
+  .hljs-comment, .hljs-quote, .hljs-doctag { color: #6a9955; font-style: italic; }
+  .hljs-keyword, .hljs-literal, .hljs-selector-tag, .hljs-built_in { color: #569cd6; }
+  .hljs-string, .hljs-meta .hljs-string { color: #ce9178; }
+  .hljs-number, .hljs-symbol { color: #b5cea8; }
+  .hljs-title, .hljs-name, .hljs-title.function_ { color: #dcdcaa; }
+  .hljs-attr, .hljs-attribute, .hljs-variable, .hljs-params, .hljs-template-variable { color: #9cdcfe; }
+  .hljs-type, .hljs-title.class_ { color: #4ec9b0; }
+  .hljs-meta, .hljs-meta .hljs-keyword { color: #c586c0; }
+
+  /* ---- right: rendered explanations ---- */
   .doc-pane { flex: 1 1 auto; min-width: 0; overflow: auto; padding: 12px 16px;
               background: var(--vscode-editor-background); }
   .xc-block {
-    padding: 10px 18px; margin: 0 0 10px; border-radius: 8px;
+    padding: 12px 20px; margin: 0 0 12px; border-radius: 8px;
     border: 1px solid transparent; scroll-margin-top: 12px; cursor: pointer;
   }
   .xc-block:hover { border-color: var(--vscode-panel-border); }
@@ -162,10 +212,10 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
   }
   .xc-block-id {
     font: 600 11px var(--vscode-font-family); letter-spacing: .05em; text-transform: uppercase;
-    opacity: .55; margin: 2px 0 6px;
+    opacity: .55; margin: 2px 0 8px;
   }
   .xc-block > :first-of-type { margin-top: 0; }
-  .xc-block h1, .xc-block h2, .xc-block h3 { margin: 12px 0 6px; line-height: 1.25; }
+  .xc-block h1, .xc-block h2, .xc-block h3 { margin: 14px 0 6px; line-height: 1.25; }
   .doc-pane code { background: var(--vscode-textCodeBlock-background); padding: 1px 5px; border-radius: 3px; }
   .doc-pane pre { background: var(--vscode-textCodeBlock-background); padding: 10px 12px; border-radius: 6px; overflow: auto; }
   .doc-pane pre code { background: none; padding: 0; }
@@ -173,186 +223,39 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
   .doc-pane th, .doc-pane td { border: 1px solid var(--vscode-panel-border); padding: 4px 10px; text-align: left; }
   .doc-pane blockquote { margin: 8px 0; padding: 4px 12px; opacity: .85;
                          border-left: 3px solid var(--vscode-focusBorder, #007fd4); }
+  /* MathML (Temml) */
+  .doc-pane math { font-size: 1.06em; }
+  .doc-pane eqn, .doc-pane .eqn, .doc-pane math[display="block"] {
+    display: block; margin: 10px 0; overflow-x: auto; }
+
+  .errbar { flex: 0 0 auto; padding: 3px 12px; font-size: 12px;
+            color: var(--vscode-errorForeground, #e55);
+            background: var(--vscode-inputValidation-errorBackground, transparent);
+            border-top: 1px solid var(--vscode-panel-border); }
+  .errbar:empty { display: none; }
 </style>
 </head>
 <body>
-  <div class="toolbar">
-    <button id="swap" title="Поменять панели местами">&#8646; Поменять стороны</button>
-    <button id="reset" title="Сбросить ширину панелей 50/50">&#8634; Сбросить</button>
-    <span id="errbar" class="errbar"></span>
-  </div>
   <div class="wrap" id="wrap">
-    <div class="slot" id="slotLeft"></div>
-    <div class="gutter" id="gutter"></div>
-    <div class="slot" id="slotRight"></div>
+    <div class="slot" id="slotLeft">
+      <div id="codePane" class="code-pane">
+        <div class="editor">
+          <pre id="hlpre" class="hl" aria-hidden="true"><code id="hl" class="hljs"></code></pre>
+          <textarea id="code" spellcheck="false" autocapitalize="off"
+                    autocomplete="off" autocorrect="off" wrap="off"></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="gutter" id="gutter">
+      <button id="swap" class="swap-btn" title="Поменять стороны" aria-label="Поменять стороны">&#8646;</button>
+    </div>
+    <div class="slot" id="slotRight">
+      <div id="docPane" class="doc-pane"><div id="doc"></div></div>
+    </div>
   </div>
+  <div id="errbar" class="errbar"></div>
 
-  <div id="codePane" class="code-pane"><textarea id="code" spellcheck="false"></textarea></div>
-  <div id="docPane" class="doc-pane"><div id="doc"></div></div>
-
-  <script nonce="${nonce}">
-    const vscode = acquireVsCodeApi();
-    const wrap = document.getElementById('wrap');
-    const slotLeft = document.getElementById('slotLeft');
-    const slotRight = document.getElementById('slotRight');
-    const gutter = document.getElementById('gutter');
-    const codePane = document.getElementById('codePane');
-    const docPane = document.getElementById('docPane');
-    const codeEl = document.getElementById('code');
-    const docEl = document.getElementById('doc');
-    const errEl = document.getElementById('errbar');
-
-    let views = [];
-    let debounce;
-    let active = 'code';        // which pane the user is driving
-    let lockUntil = 0;          // ignore programmatic-scroll echoes until this time
-    let lineHeight = 18;
-
-    // ---- persisted layout ----
-    const saved = vscode.getState() || {};
-    let codeOnLeft = saved.codeOnLeft !== false;   // default: code on left
-    let leftFraction = saved.leftFraction || 0.5;
-    function save() { vscode.setState({ codeOnLeft: codeOnLeft, leftFraction: leftFraction }); }
-
-    function applyOrder() {
-      if (codeOnLeft) { slotLeft.appendChild(codePane); slotRight.appendChild(docPane); }
-      else { slotLeft.appendChild(docPane); slotRight.appendChild(codePane); }
-    }
-    function setSplit(f) {
-      leftFraction = Math.max(0.15, Math.min(0.85, f));
-      wrap.style.gridTemplateColumns = leftFraction + 'fr 7px ' + (1 - leftFraction) + 'fr';
-    }
-    applyOrder();
-    setSplit(leftFraction);
-
-    document.getElementById('swap').addEventListener('click', function () {
-      codeOnLeft = !codeOnLeft; applyOrder(); save(); measure(); syncFromCode();
-    });
-    document.getElementById('reset').addEventListener('click', function () {
-      setSplit(0.5); save();
-    });
-
-    // ---- draggable gutter ----
-    let dragging = false;
-    gutter.addEventListener('pointerdown', function (e) {
-      dragging = true; gutter.classList.add('dragging');
-      gutter.setPointerCapture(e.pointerId);
-    });
-    gutter.addEventListener('pointermove', function (e) {
-      if (!dragging) return;
-      const r = wrap.getBoundingClientRect();
-      setSplit((e.clientX - r.left) / r.width);
-    });
-    gutter.addEventListener('pointerup', function () {
-      if (!dragging) return;
-      dragging = false; gutter.classList.remove('dragging'); save();
-    });
-
-    // ---- measurement ----
-    function measure() {
-      const cs = getComputedStyle(codeEl);
-      const probe = document.createElement('div');
-      probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;' +
-        'font-family:' + cs.fontFamily + ';font-size:' + cs.fontSize + ';line-height:1.5';
-      probe.textContent = 'Xg';
-      document.body.appendChild(probe);
-      lineHeight = probe.offsetHeight || 18;
-      probe.remove();
-    }
-
-    // ---- sync helpers ----
-    function caretLine() {
-      return codeEl.value.slice(0, codeEl.selectionStart).split('\\n').length - 1;
-    }
-    function codeTopLine() {
-      return Math.round(codeEl.scrollTop / lineHeight);
-    }
-    function blockForFlatLine(line) {
-      let chosen = null;
-      for (const v of views) { if (line >= v.flatStartLine) chosen = v; }
-      return chosen;
-    }
-    function highlight(id) {
-      document.querySelectorAll('.xc-block').forEach(function (el) {
-        el.classList.toggle('active', el.getAttribute('data-block-id') === id);
-      });
-    }
-    function lock() { lockUntil = Date.now() + 140; }
-
-    // code -> doc
-    function syncFromCode() {
-      if (!views.length) return;
-      const v = blockForFlatLine(active === 'code' ? caretLine() : codeTopLine());
-      if (!v) return;
-      highlight(v.blockId);
-      const el = docPane.querySelector('[data-block-id="' + cssEsc(v.blockId) + '"]');
-      if (el) { lock(); el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
-    }
-    // doc -> code
-    function syncFromDoc() {
-      if (!views.length) return;
-      const pr = docPane.getBoundingClientRect();
-      let best = null, bestTop = Infinity;
-      docPane.querySelectorAll('.xc-block').forEach(function (el) {
-        const t = el.getBoundingClientRect().top - pr.top;
-        if (t >= -4 && t < bestTop) { bestTop = t; best = el; }
-      });
-      if (!best) return;
-      const id = best.getAttribute('data-block-id');
-      highlight(id);
-      const v = views.find(function (x) { return x.blockId === id; });
-      if (v) { lock(); codeEl.scrollTop = Math.max(0, v.flatStartLine * lineHeight); }
-    }
-    function cssEsc(s) { return String(s).replace(/["\\\\]/g, '\\\\$&'); }
-
-    // ---- events: mark active pane, then sync automatically ----
-    codePane.addEventListener('pointerenter', function () { active = 'code'; });
-    docPane.addEventListener('pointerenter', function () { active = 'doc'; });
-    codeEl.addEventListener('focus', function () { active = 'code'; });
-
-    codeEl.addEventListener('scroll', function () {
-      if (active === 'code' && Date.now() > lockUntil) syncFromCode();
-    });
-    codeEl.addEventListener('keyup', function () { active = 'code'; syncFromCode(); });
-    codeEl.addEventListener('click', function () { active = 'code'; syncFromCode(); });
-    docPane.addEventListener('scroll', function () {
-      if (active === 'doc' && Date.now() > lockUntil) syncFromDoc();
-    });
-    docPane.addEventListener('click', function (e) {
-      const blk = e.target.closest ? e.target.closest('.xc-block') : null;
-      if (!blk) return;
-      active = 'doc';
-      const v = views.find(function (x) { return x.blockId === blk.getAttribute('data-block-id'); });
-      if (v) { highlight(v.blockId); lock(); codeEl.scrollTop = Math.max(0, v.flatStartLine * lineHeight); }
-    });
-
-    codeEl.addEventListener('input', function () {
-      clearTimeout(debounce);
-      debounce = setTimeout(function () {
-        vscode.postMessage({ type: 'editCode', code: codeEl.value });
-      }, 300);
-    });
-
-    // ---- receive document state ----
-    window.addEventListener('message', function (e) {
-      const m = e.data;
-      if (m.type !== 'doc') return;
-      const pos = codeEl.selectionStart;
-      const top = codeEl.scrollTop;
-      if (codeEl.value !== m.code) codeEl.value = m.code;
-      try { codeEl.setSelectionRange(pos, pos); } catch (err) {}
-      codeEl.scrollTop = top;
-      docEl.innerHTML = m.explanationHtml;
-      views = m.views || [];
-      errEl.textContent = (m.errors && m.errors.length) ? '\\u26A0 ' + m.errors.join('; ') : '';
-      measure();
-      syncFromCode();
-    });
-
-    window.addEventListener('resize', measure);
-    measure();
-    vscode.postMessage({ type: 'ready' });
-  </script>
+  <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
   }
