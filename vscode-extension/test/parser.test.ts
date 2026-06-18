@@ -9,6 +9,7 @@ import {
   setExplanationBody,
   insertExplanationBefore,
   describeSelection,
+  renameBlockId,
 } from "../src/xcParser";
 
 const SAMPLE = `---
@@ -162,6 +163,19 @@ check("describeSelection across blocks is rejected", () => {
   const v = codeViews(parse(SAMPLE));
   const r = describeSelection(SAMPLE, v[0].flatStartLine, v[1].flatStartLine + v[1].lineCount, "x");
   assert.ok(!r.ok && /одного блока/.test(r.message || ""));
+});
+
+check("renameBlockId renames both explanation and code headings", () => {
+  const out = renameBlockId(SAMPLE, "a", "alpha");
+  assert.ok(out.includes("# [EXPLANATION: alpha]"));
+  assert.ok(out.includes("# [CODE: alpha]"));
+  assert.ok(!out.includes(": a]"));
+  // 'b' untouched, code unchanged
+  assert.ok(out.includes("# [EXPLANATION: b]"));
+  assert.strictEqual(extract(out), extract(SAMPLE));
+  const r = parse(out);
+  assert.ok(r.blocks.some((x) => x.kind === "EXPLANATION" && x.blockId === "alpha"));
+  assert.ok(r.blocks.some((x) => x.kind === "CODE" && x.blockId === "alpha"));
 });
 
 console.log(`\n${passed} TS parser checks passed.`);

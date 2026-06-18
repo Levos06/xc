@@ -364,6 +364,21 @@ export function insertExplanationBefore(
   return [...lines.slice(0, at), ...block, ...lines.slice(at)].join("\n");
 }
 
+/**
+ * Rename a block id everywhere it appears — both the EXPLANATION heading and
+ * its paired CODE heading — so the explanation/code anchor link is preserved.
+ */
+export function renameBlockId(text: string, oldId: string, newId: string): string {
+  const res = parse(text);
+  const lines = [...res.lines];
+  for (const b of res.blocks) {
+    if (b.blockId === oldId) {
+      lines[b.headingLine] = `# [${b.kind}: ${newId}]`;
+    }
+  }
+  return lines.join("\n");
+}
+
 export interface DescribeResult {
   ok: boolean;
   message?: string;

@@ -23,6 +23,7 @@ hljs.registerLanguage("rust", rust);
 const vscode = acquireVsCodeApi();
 
 const wrap = document.getElementById("wrap");
+const curtain = document.getElementById("curtain");
 const slotLeft = document.getElementById("slotLeft");
 const slotRight = document.getElementById("slotRight");
 const gutter = document.getElementById("gutter");
@@ -32,9 +33,14 @@ const docPane = document.getElementById("docPane");
 const codeEl = document.getElementById("code");
 const hlEl = document.getElementById("hl");
 const hlPre = document.getElementById("hlpre");
+const lineNos = document.getElementById("linenos");
+const codeBand = document.getElementById("codeband");
 const docEl = document.getElementById("doc");
 const errEl = document.getElementById("errbar");
 const describeBtn = document.getElementById("describe");
+
+const PADDING_TOP = 12; // must match the editor's padding-top in CSS
+let hoverBand = null;   // the CodeView currently band-highlighted (doc hover)
 
 let views = [];
 let rawById = {};
@@ -63,12 +69,11 @@ function applyOrder() {
   }
 }
 function positionSwap() {
-  // Place the swap button exactly over the divider. Computed from the grid
-  // geometry (left fraction of the width minus the 7px gap) so it never lags
-  // behind a stale gutter measurement.
-  const r = wrap.getBoundingClientRect();
-  const x = r.left + leftFraction * (r.width - 7) + 3.5;
-  swap.style.left = x + "px";
+  // Centre the swap button on the actual rendered divider, measured relative to
+  // the curtain (so it stays correct regardless of margins / scrollbars).
+  const g = gutter.getBoundingClientRect();
+  const c = curtain.getBoundingClientRect();
+  swap.style.left = g.left + g.width / 2 - c.left + "px";
 }
 function setSplit(f) {
   leftFraction = Math.max(0.15, Math.min(0.85, f));
@@ -134,12 +139,35 @@ function rehighlight() {
     html = escapeHtml(code);
   }
   hlEl.innerHTML = html + "\n";
+  renderLineNumbers();
 }
 
-// ---------- scroll mirror (textarea -> highlight pre) ----------
+function renderLineNumbers() {
+  const n = codeEl.value.replace(/\n$/, "").split("\n").length;
+  const out = [];
+  for (let i = 1; i <= n; i++) out.push(i);
+  lineNos.textContent = out.join("\n");
+  lineNos.scrollTop = codeEl.scrollTop;
+}
+
+// Highlight band over the code lines belonging to a hovered explanation block.
+function showBand(view) {
+  hoverBand = view || null;
+  if (!hoverBand) {
+    codeBand.style.display = "none";
+    return;
+  }
+  codeBand.style.display = "block";
+  codeBand.style.top = PADDING_TOP + hoverBand.flatStartLine * lineHeight - codeEl.scrollTop + "px";
+  codeBand.style.height = hoverBand.lineCount * lineHeight + "px";
+}
+
+// ---------- scroll mirror (textarea -> highlight pre + gutter + band) ----------
 codeEl.addEventListener("scroll", function () {
   hlPre.scrollTop = codeEl.scrollTop;
   hlPre.scrollLeft = codeEl.scrollLeft;
+  lineNos.scrollTop = codeEl.scrollTop;
+  if (hoverBand) showBand(hoverBand);
   if (driver === "code") syncDocFromCode();
   positionDescribe();
 });
@@ -148,25 +176,39 @@ codeEl.addEventListener("scroll", function () {
 function cssEsc(s) {
   return String(s).replace(/["\\]/g, "\\$&");
 }
-function monotonic(a) {
-  for (let i = 1; i < a.length; i++) {
-    if (a[i] <= a[i - 1]) a[i] = a[i - 1] + 0.001;
-  }
-}
 function recomputeAnchors() {
-  codeAnchors = [0];
-  docAnchors = [0];
+  const codeMax = Math.max(0, codeEl.scrollHeight - codeEl.clientHeight);
+  const docMax = Math.max(0, docPane.scrollHeight - docPane.clientHeight);
   const docRect = docPane.getBoundingClientRect();
+
+  // Build raw anchor pairs: (0,0), one per block, then the (max,max) endpoint.
+  const raw = [[0, 0]];
   for (const v of views) {
-    codeAnchors.push(v.flatStartLine * lineHeight);
     const el = docPane.querySelector('[data-block-id="' + cssEsc(v.blockId) + '"]');
-    const y = el ? el.getBoundingClientRect().top - docRect.top + docPane.scrollTop : 0;
-    docAnchors.push(y);
+    const dy = el ? el.getBoundingClientRect().top - docRect.top + docPane.scrollTop : 0;
+    raw.push([v.flatStartLine * lineHeight, dy]);
   }
-  codeAnchors.push(Math.max(0, codeEl.scrollHeight - codeEl.clientHeight));
-  docAnchors.push(Math.max(0, docPane.scrollHeight - docPane.clientHeight));
-  monotonic(codeAnchors);
-  monotonic(docAnchors);
+
+  // Keep pairs strictly increasing on BOTH axes (invertible), clamped to the
+  // reachable range; then force the final pair to exactly (codeMax, docMax) so
+  // the two panes always hit their ends together.
+  const cs = [];
+  const ds = [];
+  let lc = -1;
+  let ld = -1;
+  for (const p of raw) {
+    const c = Math.max(0, Math.min(codeMax, p[0]));
+    const d = Math.max(0, Math.min(docMax, p[1]));
+    if (c > lc && d > ld) { cs.push(c); ds.push(d); lc = c; ld = d; }
+  }
+  while (cs.length && (cs[cs.length - 1] >= codeMax || ds[ds.length - 1] >= docMax)) {
+    cs.pop();
+    ds.pop();
+  }
+  cs.push(codeMax);
+  ds.push(docMax);
+  codeAnchors = cs;
+  docAnchors = ds;
 }
 function scheduleAnchors() {
   cancelAnimationFrame(raf);
@@ -203,11 +245,9 @@ function highlight(id) {
   });
 }
 function syncDocFromCode() {
-  if (codeAnchors.length !== views.length + 2) recomputeAnchors();
   docPane.scrollTop = interp(codeEl.scrollTop, codeAnchors, docAnchors);
 }
 function syncCodeFromDoc() {
-  if (docAnchors.length !== views.length + 2) recomputeAnchors();
   codeEl.scrollTop = interp(docPane.scrollTop, docAnchors, codeAnchors);
   hlPre.scrollTop = codeEl.scrollTop;
 }
@@ -227,6 +267,17 @@ docPane.addEventListener("pointerdown", setDriver("doc"));
 docPane.addEventListener("scroll", function () {
   if (driver === "doc") syncCodeFromDoc();
 });
+
+// Hovering an explanation block highlights its code lines on the left.
+docPane.addEventListener("mouseover", function (e) {
+  const blk = e.target.closest ? e.target.closest(".xc-block") : null;
+  if (!blk) return;
+  const id = blk.getAttribute("data-block-id");
+  const v = views.find(function (x) { return x.blockId === id; });
+  if (!v) { showBand(null); return; }
+  if (!hoverBand || hoverBand.blockId !== v.blockId) showBand(v);
+});
+docPane.addEventListener("mouseleave", function () { showBand(null); });
 
 // ---------- code edits ----------
 let debounce;
@@ -271,9 +322,35 @@ describeBtn.addEventListener("click", function () {
 });
 
 // ---------- inline editing of explanation blocks ----------
+function closeAllEdits() {
+  docEl.querySelectorAll(".xc-block").forEach(function (b) {
+    const ta = b.querySelector(".xc-edit");
+    if (ta) ta.remove();
+    const idr = b.querySelector(".xc-edit-id-row");
+    if (idr) idr.remove();
+    const bar = b.querySelector(".xc-edit-bar");
+    if (bar) bar.remove();
+    const body = b.querySelector(".xc-body");
+    if (body) body.style.display = "";
+  });
+}
 function enterEdit(blk, id) {
   if (blk.querySelector(".xc-edit")) return;
+  closeAllEdits(); // editing another block closes the previous editor
   const body = blk.querySelector(".xc-body");
+
+  // id (block name) row
+  const idRow = document.createElement("div");
+  idRow.className = "xc-edit-id-row";
+  const idLabel = document.createElement("label");
+  idLabel.textContent = "Имя блока";
+  const idInput = document.createElement("input");
+  idInput.className = "xc-edit-id";
+  idInput.value = id;
+  idInput.spellcheck = false;
+  idRow.appendChild(idLabel);
+  idRow.appendChild(idInput);
+
   const ta = document.createElement("textarea");
   ta.className = "xc-edit";
   ta.value = rawById[id] || "";
@@ -286,21 +363,28 @@ function enterEdit(blk, id) {
   cancelB.textContent = "Отмена";
   bar.appendChild(saveB);
   bar.appendChild(cancelB);
+
   if (body) body.style.display = "none";
+  blk.appendChild(idRow);
   blk.appendChild(ta);
   blk.appendChild(bar);
   ta.focus();
   ta.style.height = Math.max(120, ta.scrollHeight + 4) + "px";
 
   function close() {
+    idRow.remove();
     ta.remove();
     bar.remove();
     if (body) body.style.display = "";
   }
-  // Save always closes the editor — even when nothing changed (the host simply
-  // does nothing in that case and the rendered body returns).
+  // Save always closes the editor — even when nothing changed.
   saveB.addEventListener("click", function () {
-    vscode.postMessage({ type: "editExplanation", blockId: id, markdown: ta.value });
+    vscode.postMessage({
+      type: "editExplanation",
+      blockId: id,
+      newId: idInput.value.trim(),
+      markdown: ta.value,
+    });
     close();
   });
   cancelB.addEventListener("click", close);
@@ -311,11 +395,11 @@ docPane.addEventListener("dblclick", function (e) {
 });
 
 // ---------- add-block "+" affordances + edit pencils ----------
+// VS Code "edit" codicon pencil.
 const PENCIL_SVG =
-  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" ' +
-  'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<path d="M10.8 2.4l2.8 2.8M3 13l-.6 1.6 1.6-.6 8.4-8.4-1-1z"/>' +
-  '<path d="M9.7 3.5l2.8 2.8"/></svg>';
+  '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">' +
+  '<path d="M13.23 1h-1.46L3.52 9.25l-.16.22L1 13.59 2.41 15l4.12-2.36.22-.16L15 4.23V2.77L13.23 1zM2.41 13.59l1.51-3 1.45 1.45-2.96 1.55zm3.83-2.06L4.47 9.76l8-8 1.77 1.77-8 8z"/>' +
+  "</svg>";
 
 function makeAddZone(beforeBlockId) {
   const z = document.createElement("div");
@@ -386,4 +470,7 @@ window.addEventListener("resize", function () {
   positionDescribe();
 });
 measure();
+rehighlight(); // initial line numbers
+// Position the swap button once layout has actually settled.
+requestAnimationFrame(function () { requestAnimationFrame(positionSwap); });
 vscode.postMessage({ type: "ready" });

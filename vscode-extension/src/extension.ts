@@ -24,6 +24,7 @@ import {
   setExplanationBody,
   insertExplanationBefore,
   describeSelection,
+  renameBlockId,
 } from "./xcParser";
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
@@ -151,7 +152,20 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
         if (msg.type === "editCode") {
           await replaceDoc(spliceCode(text, msg.code));
         } else if (msg.type === "editExplanation") {
-          await replaceDoc(setExplanationBody(text, msg.blockId, msg.markdown));
+          let working = text;
+          let targetId = msg.blockId;
+          const newId = (msg.newId || "").trim();
+          if (newId && newId !== msg.blockId) {
+            const taken = new Set(parse(text).blocks.map((b) => b.blockId));
+            // Reject only a clash with a *different* existing block.
+            if (taken.has(newId)) {
+              vscode.window.showWarningMessage(`Идентификатор «${newId}» уже занят.`);
+            } else {
+              working = renameBlockId(working, msg.blockId, newId);
+              targetId = newId;
+            }
+          }
+          await replaceDoc(setExplanationBody(working, targetId, msg.markdown));
         } else if (msg.type === "insertBlock") {
           const id = uniqueNoteId(text);
           pendingEdit = id;
@@ -207,7 +221,7 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
 
   /* thin top "curtain": holds the swap button above the divider */
   .curtain { position: relative; flex: 0 0 var(--curtain-h); height: var(--curtain-h);
-             background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background)); }
+             background: var(--vscode-editor-background); }
   .swap-btn {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
     width: 24px; height: 24px; border-radius: 6px; padding: 0; z-index: 6; cursor: pointer;
@@ -228,22 +242,37 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
   /* ---- left: syntax-highlighted editor (transparent textarea over <pre>) ---- */
   .code-pane { position: relative; flex: 1 1 auto; min-width: 0;
                background: var(--vscode-editor-background); }
-  .editor { position: absolute; inset: 0; }
+  .editor { position: absolute; inset: 0; overflow: hidden; --gutter-w: 48px; }
   .editor pre.hl, .editor textarea {
     margin: 0; border: 0; background: transparent; position: absolute; inset: 0;
-    width: 100%; height: 100%; padding: 12px; tab-size: 4;
+    width: 100%; height: 100%; padding: 12px 12px 12px calc(var(--gutter-w) + 8px); tab-size: 4;
     font-family: var(--vscode-editor-font-family, monospace);
     font-size: var(--vscode-editor-font-size, 13px); line-height: 1.5; letter-spacing: 0;
     white-space: pre;
   }
-  .editor pre.hl { overflow: hidden; z-index: 0; pointer-events: none;
+  .editor pre.hl { overflow: hidden; z-index: 1; pointer-events: none;
                    color: var(--vscode-editor-foreground); }
   .editor pre.hl code { font: inherit; white-space: pre; display: block; background: none; }
   .editor textarea {
-    z-index: 1; resize: none; outline: none; overflow: auto;
+    z-index: 2; resize: none; outline: none; overflow: auto;
     color: transparent; caret-color: var(--vscode-editor-foreground);
   }
   .editor textarea::selection { background: var(--vscode-editor-selectionBackground, #264f78); }
+  /* line-number gutter (opaque so horizontally-scrolled code slides under it) */
+  .linenos {
+    position: absolute; top: 0; left: 0; bottom: 0; width: var(--gutter-w); z-index: 3;
+    overflow: hidden; text-align: right; padding: 12px 6px 12px 0; box-sizing: border-box;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: var(--vscode-editor-font-size, 13px); line-height: 1.5; white-space: pre;
+    color: var(--vscode-editorLineNumber-foreground, #6e7681);
+    background: var(--vscode-editor-background); user-select: none; pointer-events: none;
+  }
+  /* highlight band for the code lines of a hovered explanation block */
+  .codeband {
+    position: absolute; left: var(--gutter-w); right: 0; z-index: 0; display: none;
+    background: var(--vscode-editor-rangeHighlightBackground, rgba(127,127,127,.12));
+    pointer-events: none;
+  }
 
   /* floating "describe selection" button */
   .describe-btn {
@@ -271,8 +300,8 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
     position: relative; padding: 10px 12px; margin: 0;
     border-radius: 6px; scroll-margin-top: 12px;
   }
-  /* shown only on a code click that maps to this block */
-  .xc-block.active { background: var(--vscode-editor-selectionHighlightBackground, #2a2d2e); }
+  /* shown only on a code click that maps to this block — kept pale */
+  .xc-block.active { background: rgba(127, 127, 127, 0.10); }
   .xc-block-id {
     font: 600 11px var(--vscode-font-family); letter-spacing: .05em; text-transform: uppercase;
     opacity: .45; margin: 2px 0 6px;
@@ -286,11 +315,12 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
   .doc-pane th, .doc-pane td { border: 1px solid var(--vscode-panel-border); padding: 4px 10px; text-align: left; }
   .doc-pane blockquote { margin: 8px 0; padding: 4px 12px; opacity: .85;
                          border-left: 3px solid var(--vscode-focusBorder, #007fd4); }
-  /* MathML (Temml) — larger, as requested */
-  .doc-pane math { font-size: 1.28em; }
+  /* MathML (Temml) — larger, no per-formula scrollbar */
+  .doc-pane math { font-size: 1.25em; }
   .doc-pane eqn, .doc-pane .eqn, .doc-pane math[display="block"] {
-    display: block; margin: 12px 0; overflow-x: auto; }
-  .doc-pane math[display="block"] { font-size: 1.5em; }
+    display: block; margin: 12px 0; overflow: visible; }
+  .doc-pane math[display="block"] { font-size: 1.4em; }
+  .doc-pane .katex-display, .doc-pane .tml-display { overflow: visible; }
 
   /* inline editing */
   .xc-edit { width: 100%; box-sizing: border-box; min-height: 120px; resize: vertical;
@@ -298,6 +328,15 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
              line-height: 1.5; padding: 8px 10px; border-radius: 6px;
              color: var(--vscode-input-foreground); background: var(--vscode-input-background);
              border: 1px solid var(--vscode-focusBorder, #007fd4); outline: none; }
+  .xc-edit-id-row { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; }
+  .xc-edit-id-row label { font: 600 11px var(--vscode-font-family); letter-spacing: .05em;
+                          text-transform: uppercase; opacity: .55; }
+  .xc-edit-id {
+    flex: 0 0 auto; width: 200px; font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 12px; padding: 3px 8px; border-radius: 5px;
+    color: var(--vscode-input-foreground); background: var(--vscode-input-background);
+    border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); outline: none; }
+  .xc-edit-id:focus { border-color: var(--vscode-focusBorder, #007fd4); }
   .xc-edit-bar { display: flex; gap: 6px; margin: 6px 0 0; }
   .xc-edit-bar button { font: 500 12px var(--vscode-font-family); cursor: pointer;
              padding: 3px 12px; border-radius: 4px; border: 1px solid var(--vscode-panel-border);
@@ -353,9 +392,11 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
     <div class="slot" id="slotLeft">
       <div id="codePane" class="code-pane">
         <div class="editor">
+          <div id="codeband" class="codeband"></div>
           <pre id="hlpre" class="hl" aria-hidden="true"><code id="hl" class="hljs"></code></pre>
           <textarea id="code" spellcheck="false" autocapitalize="off"
                     autocomplete="off" autocorrect="off" wrap="off"></textarea>
+          <div id="linenos" class="linenos"></div>
           <button id="describe" class="describe-btn" title="Описать выделенный код">＋ Описать выделение</button>
         </div>
       </div>
