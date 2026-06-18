@@ -14,6 +14,12 @@ Abstracts the physical `.xc` file into a developer-friendly experience.
   - **Resizable divider** (drag the gutter); width and pane order are
     remembered per file.
   - **Swap sides** via the ⇄ icon on the divider.
+- **Editing explanations:** hover a block and click ✎ (or double-click it) to
+  edit its Markdown inline; ⌘/Ctrl+Enter saves, Esc cancels. Hover the gap
+  between blocks for a **＋** to insert a new block. Select code on the left and
+  click **＋ Описать выделение** to attach a description to that exact range —
+  appended as a sub-section if the code is already covered by a block, or a new
+  block anchored to the selected code if it was undocumented.
 - **Smooth two-way scroll sync:** scrolling either pane drives the other
   continuously. Code-block starts and their explanation sections are treated as
   anchor points and the scroll position is linearly interpolated between them,

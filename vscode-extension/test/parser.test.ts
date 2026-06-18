@@ -1,6 +1,15 @@
 /** Minimal assertion harness for the TS recognizer — no test runner needed. */
 import * as assert from "assert";
-import { parse, codeBlocks, extract, spliceCode, codeViews } from "../src/xcParser";
+import {
+  parse,
+  codeBlocks,
+  extract,
+  spliceCode,
+  codeViews,
+  setExplanationBody,
+  insertExplanationBefore,
+  describeSelection,
+} from "../src/xcParser";
 
 const SAMPLE = `---
 language: "python"
@@ -102,6 +111,57 @@ check("multi-block splice handles deletions within one block", () => {
   const r = parse(spliced);
   const bCode = r.lines.slice(blocks[1].bodyStart, blocks[1].bodyEnd).join("\n");
   assert.strictEqual(bCode.trim(), "def b():\n    return 2", "block B intact after A shrinks");
+});
+
+check("setExplanationBody rewrites prose, code hash stable", () => {
+  const before = extract(SAMPLE);
+  const out = setExplanationBody(SAMPLE, "a", "Brand new prose for A\nwith two lines.");
+  assert.ok(out.includes("Brand new prose for A"));
+  assert.ok(!out.includes("Some prose about A."));
+  assert.ok(out.includes("# [EXPLANATION: a]"), "heading preserved");
+  assert.strictEqual(extract(out), before, "code untouched");
+});
+
+check("insertExplanationBefore adds a block before another", () => {
+  const out = insertExplanationBefore(SAMPLE, "b", "note_1", "## Note\nbetween A and B");
+  assert.ok(out.includes("# [EXPLANATION: note_1]"));
+  assert.ok(out.indexOf("note_1") < out.indexOf("[EXPLANATION: b]"));
+  assert.ok(out.indexOf("[EXPLANATION: a]") < out.indexOf("note_1"));
+  assert.strictEqual(extract(out), extract(SAMPLE), "code untouched");
+});
+
+check("insertExplanationBefore(null) appends at end", () => {
+  const out = insertExplanationBefore(SAMPLE, null, "tail", "## Tail note");
+  assert.ok(out.trimEnd().endsWith("## Tail note") || out.includes("[EXPLANATION: tail]"));
+  const r = parse(out);
+  assert.ok(r.blocks.some((b) => b.blockId === "tail"));
+});
+
+check("describeSelection within a described block -> subblock", () => {
+  const v = codeViews(parse(SAMPLE));
+  // select inside block 'a' (its flat range)
+  const r = describeSelection(SAMPLE, v[0].flatStartLine, v[0].flatStartLine + 1, "### Detail\nabout the return");
+  assert.ok(r.ok && r.mode === "subblock" && r.blockId === "a");
+  assert.ok(r.text!.includes("### Detail"));
+  // still one explanation block 'a' (appended, not duplicated)
+  const expl = parse(r.text!).blocks.filter((b) => b.kind === "EXPLANATION" && b.blockId === "a");
+  assert.strictEqual(expl.length, 1);
+  assert.strictEqual(extract(r.text!), extract(SAMPLE), "code untouched");
+});
+
+check("describeSelection on orphan code -> separate explanation", () => {
+  const orphan = "# [CODE: lone]\n```python\ndef lone():\n    return 7\n```\n";
+  const v = codeViews(parse(orphan));
+  const r = describeSelection(orphan, v[0].flatStartLine, v[0].flatStartLine + 1, "## Lone\ndescribes lone()");
+  assert.ok(r.ok && r.mode === "separate" && r.blockId === "lone");
+  assert.ok(r.text!.indexOf("[EXPLANATION: lone]") < r.text!.indexOf("[CODE: lone]"));
+  assert.strictEqual(extract(r.text!).trim(), "def lone():\n    return 7", "code untouched");
+});
+
+check("describeSelection across blocks is rejected", () => {
+  const v = codeViews(parse(SAMPLE));
+  const r = describeSelection(SAMPLE, v[0].flatStartLine, v[1].flatStartLine + v[1].lineCount, "x");
+  assert.ok(!r.ok && /одного блока/.test(r.message || ""));
 });
 
 console.log(`\n${passed} TS parser checks passed.`);
