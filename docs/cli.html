@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>xc-cli — .xc</title>
+<meta name="description" content="xc-cli: детерминированная утилита для формата .xc — init, extract, run, validate." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,500;1,9..144,600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<nav class="top">
+  <div class="wrap">
+    <a class="brand" href="index.html"><span class="dot">.</span>xc</a>
+    <div class="links">
+      <a href="index.html#idea">Идея</a>
+      <a href="index.html#philosophy">Философия</a>
+      <a class="prod active" href="cli.html">CLI</a>
+      <a class="prod" href="agents.html">Агенты</a>
+      <a class="prod" href="editor.html">Редактор</a>
+      <a class="navbtn" href="https://github.com/Levos06/xc">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<header class="phero">
+  <div class="wrap">
+    <div class="kicker">01 · CLI</div>
+    <h1>xc-cli</h1>
+    <p class="lead">Детерминированная, локальная утилита командной строки — ядро экосистемы.
+      Извлечение кода тривиально и работает за линейное время, а результат побитово стабилен
+      при любой правке прозы.</p>
+    <div class="cta" style="margin-top:24px;">
+      <a class="btn primary" href="editor.html#demo">Посмотреть формат →</a>
+      <a class="btn" href="https://github.com/Levos06/xc/tree/feat/xc-mvp/core">Исходники ↗</a>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <div class="eyebrow">Команды</div>
+    <h2>Четыре операции.</h2>
+    <div class="grid2" style="margin-top:8px;">
+      <div class="card">
+        <h3><code style="font-size:16px;color:var(--accent-ink)">xc-cli init</code></h3>
+        <p>Оборачивает обычный исходник (<code>.py</code>, <code>.ts</code>, …) в структуру <code>.xc</code>: монолитный блок кода и стартовое объяснение.</p>
+      </div>
+      <div class="card">
+        <h3><code style="font-size:16px;color:var(--accent-ink)">xc-cli extract</code></h3>
+        <p>Поточно отдаёт чистый исполняемый код за O(n). Флаг <code>--hash</code> печатает SHA-256 слоя кода.</p>
+      </div>
+      <div class="card">
+        <h3><code style="font-size:16px;color:var(--accent-ink)">xc-cli run</code></h3>
+        <p>Извлекает код и запускает его соответствующим интерпретатором (Python, Node, Ruby, Bash…).</p>
+      </div>
+      <div class="card">
+        <h3><code style="font-size:16px;color:var(--accent-ink)">xc-cli validate</code></h3>
+        <p>Проверяет структуру и YAML, устойчив к обрыву стрима от LLM — сообщает строку, до которой файл восстановим.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap narrow">
+    <div class="eyebrow">Как пользоваться</div>
+    <h2>Установка и запуск.</h2>
+<pre class="cmd"><span class="d"># ядро + CLI</span>
+<span class="c">cd</span> core
+python3 -m venv .venv
+.venv/bin/pip install -e .
+
+<span class="d"># обернуть существующий файл</span>
+xc-cli init mymodule.py        <span class="d"># → mymodule.xc</span>
+
+<span class="d"># работать с .xc</span>
+xc-cli validate examples/auth.xc
+xc-cli extract  examples/auth.xc --hash
+xc-cli run      examples/auth.xc</pre>
+  </div>
+</section>
+
+<section>
+  <div class="wrap narrow">
+    <div class="eyebrow">No diff noise</div>
+    <h2>Прозу не видно на код-ревью.</h2>
+    <p class="sub">Скрипт <code>git-integration/setup-xc-diff.sh</code> ставит <code>textconv</code>-драйвер
+      (<code>xc-cli extract</code>) и <code>.gitattributes</code>: <code>git diff</code> по <code>.xc</code>
+      показывает только слой кода. Правка только описания даёт пустой diff.</p>
+<pre class="cmd">git-integration/setup-xc-diff.sh /path/to/repo</pre>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <a class="brand" href="index.html"><span class="dot">.</span>xc</a>
+    <span style="color:var(--faint)">Explained Code — открытый формат и инструментарий.</span>
+    <div class="cols">
+      <a href="cli.html">CLI</a>
+      <a href="agents.html">Агенты</a>
+      <a href="editor.html">Редактор</a>
+      <a href="https://github.com/Levos06/xc">GitHub</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

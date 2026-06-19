@@ -4,431 +4,153 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>.xc — Explained Code</title>
-<meta name="description" content="Открытый формат файлов, объединяющий исполняемый код и его смысловой слой — инварианты, контекст, требования — в одном файле, понятном людям, инструментам и моделям." />
-<style>
-  :root {
-    --bg: #0b0e14; --bg2: #111722; --panel: #151c28; --line: #222c3a;
-    --fg: #e6edf3; --muted: #93a1b1; --faint: #5b6776;
-    --accent: #58a6ff; --accent2: #7ee787; --warn: #e3b341; --pink: #d2a8ff;
-    --str: #a5d6ff; --kw: #ff7b72; --num: #79c0ff; --fn: #d2a8ff; --com: #8b949e;
-    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
-  }
-  * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
-  body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--sans);
-         line-height: 1.6; -webkit-font-smoothing: antialiased; }
-  a { color: var(--accent); text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
-  code, kbd { font-family: var(--mono); }
-
-  /* nav */
-  nav { position: sticky; top: 0; z-index: 20; backdrop-filter: blur(10px);
-        background: rgba(11,14,20,.7); border-bottom: 1px solid var(--line); }
-  nav .wrap { display: flex; align-items: center; gap: 20px; height: 58px; }
-  .brand { font-family: var(--mono); font-weight: 700; font-size: 18px; letter-spacing: -.5px; }
-  .brand .dot { color: var(--accent); }
-  nav .links { margin-left: auto; display: flex; gap: 22px; align-items: center; }
-  nav .links a { color: var(--muted); font-size: 14px; }
-  nav .links a:hover { color: var(--fg); text-decoration: none; }
-  .btn { display: inline-block; padding: 9px 16px; border-radius: 8px; font-size: 14px; font-weight: 600;
-         border: 1px solid var(--line); color: var(--fg); }
-  .btn:hover { text-decoration: none; border-color: var(--accent); }
-  .btn.primary { background: var(--accent); color: #0b0e14; border-color: var(--accent); }
-  .btn.primary:hover { background: #79b8ff; }
-
-  /* hero */
-  header.hero { padding: 90px 0 60px; text-align: center;
-    background: radial-gradient(1200px 400px at 50% -120px, rgba(88,166,255,.16), transparent 70%); }
-  .badge { display: inline-block; font-family: var(--mono); font-size: 12px; color: var(--accent2);
-           border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; margin-bottom: 22px; }
-  h1.title { font-size: 60px; line-height: 1.05; margin: 0 0 18px; letter-spacing: -2px; font-weight: 800; }
-  h1.title .x { color: var(--accent); }
-  .lead { font-size: 20px; color: var(--muted); max-width: 680px; margin: 0 auto 32px; }
-  .cta { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
-
-  section { padding: 64px 0; border-top: 1px solid var(--line); }
-  h2 { font-size: 30px; letter-spacing: -.8px; margin: 0 0 8px; }
-  .sub { color: var(--muted); margin: 0 0 32px; font-size: 16px; }
-  .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .12em; text-transform: uppercase;
-             color: var(--accent); margin-bottom: 10px; }
-
-  /* problem cards */
-  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 22px; }
-  .card h3 { margin: 0 0 8px; font-size: 17px; }
-  .card p { margin: 0; color: var(--muted); font-size: 14.5px; }
-  .card .ic { font-size: 22px; margin-bottom: 12px; display: block; }
-
-  /* code sample */
-  pre.sample { background: var(--bg2); border: 1px solid var(--line); border-radius: 14px;
-    padding: 20px 22px; overflow: auto; font-family: var(--mono); font-size: 13.5px; line-height: 1.6;
-    margin: 0; }
-  .tok-fm { color: var(--faint); }
-  .tok-h { color: var(--accent2); font-weight: 600; }
-  .tok-lines { color: var(--warn); }
-  .tok-md { color: var(--fg); }
-  .tok-fence { color: var(--faint); }
-  .tok-kw { color: var(--kw); } .tok-fn { color: var(--fn); } .tok-str { color: var(--str); }
-  .tok-num { color: var(--num); } .tok-com { color: var(--com); font-style: italic; }
-
-  /* demo */
-  .demo { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
-  .demo-bar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line);
-              background: var(--bg2); }
-  .demo-bar .name { font-family: var(--mono); font-size: 13px; color: var(--muted); }
-  .modes { margin-left: auto; display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-  .modes button { font: 600 12px var(--sans); cursor: pointer; padding: 5px 14px; border: 0;
-                  background: transparent; color: var(--muted); }
-  .modes button.active { background: var(--accent); color: #0b0e14; }
-  .demo-body { display: grid; grid-template-columns: 1fr 1fr; min-height: 360px; }
-  .demo-code { position: relative; border-right: 1px solid var(--line); overflow: hidden;
-               font-family: var(--mono); font-size: 13px; line-height: 22px; padding: 14px 0; }
-  .demo-code .ln { display: flex; padding: 0 16px; white-space: pre; cursor: default; }
-  .demo-code .ln:hover { background: rgba(88,166,255,.08); }
-  .demo-code .ln.hot { background: rgba(88,166,255,.14); }
-  .demo-code .gut { width: 26px; color: var(--faint); text-align: right; margin-right: 16px; user-select: none; }
-  .demo-right { position: relative; overflow: auto; }
-  /* context */
-  .ctx { padding: 16px; display: none; }
-  .ctx.on { display: block; }
-  .ctx .empty { color: var(--faint); font-size: 13px; }
-  .ctx-card { border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; margin-bottom: 12px;
-              background: var(--bg2); box-shadow: 0 2px 12px rgba(0,0,0,.25); }
-  /* grid */
-  .gr { position: relative; display: none; }
-  .gr.on { display: block; }
-  .gr .lines { position: absolute; left: 0; right: 0; top: 14px; pointer-events: none;
-    background: repeating-linear-gradient(to bottom, transparent 0, transparent 21px, var(--line) 21px, var(--line) 22px);
-    opacity: .55; }
-  .gcell { position: absolute; left: 0; right: 0; overflow: hidden; padding: 0 16px; cursor: pointer;
-           border-top: 1px solid var(--line); background: var(--panel); }
-  .gcell-head { font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
-                color: var(--faint); padding-top: 3px; }
-  .gcell.expanded { height: auto !important; overflow: visible; z-index: 5; border: 1px solid var(--accent);
-                    border-radius: 0 0 10px 10px; box-shadow: 0 10px 26px rgba(0,0,0,.5); padding-bottom: 10px; }
-  .blk-id { font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
-  .md p { margin: 4px 0; font-size: 14px; }
-  .md code { background: rgba(110,118,129,.2); padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
-  .hint { color: var(--faint); font-size: 13px; margin-top: 10px; }
-
-  /* components */
-  .comp { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
-  .comp .card h3 { font-family: var(--mono); font-size: 15px; }
-  .comp .card .tag { font-size: 12px; color: var(--accent2); font-family: var(--mono); }
-  ul.feat { margin: 12px 0 0; padding-left: 18px; color: var(--muted); font-size: 14px; }
-  ul.feat li { margin: 4px 0; }
-
-  /* install */
-  .steps { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-  pre.cmd { background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px;
-            font-family: var(--mono); font-size: 13px; overflow: auto; margin: 0; color: var(--fg); }
-  pre.cmd .c { color: var(--accent2); }
-  pre.cmd .d { color: var(--faint); }
-
-  footer { border-top: 1px solid var(--line); padding: 40px 0; color: var(--muted); font-size: 14px; }
-  footer .wrap { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
-
-  @media (max-width: 820px) {
-    h1.title { font-size: 42px; }
-    .grid3, .comp, .steps { grid-template-columns: 1fr; }
-    .demo-body { grid-template-columns: 1fr; }
-    .demo-code { border-right: 0; border-bottom: 1px solid var(--line); }
-    nav .links a:not(.btn) { display: none; }
-  }
-</style>
+<meta name="description" content="Открытый формат, объединяющий исполняемый код и его смысловой слой в одном файле — понятном людям, инструментам и языковым моделям." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,500;1,9..144,600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
 </head>
 <body>
 
-<nav>
+<nav class="top">
   <div class="wrap">
-    <span class="brand"><span class="dot">.</span>xc</span>
+    <a class="brand" href="index.html"><span class="dot">.</span>xc</a>
     <div class="links">
       <a href="#idea">Идея</a>
-      <a href="#format">Формат</a>
-      <a href="#demo">Демо</a>
-      <a href="#components">Инструменты</a>
-      <a href="#start">Старт</a>
-      <a class="btn" href="https://github.com/Levos06/xc">GitHub</a>
+      <a href="#philosophy">Философия</a>
+      <a class="prod" href="cli.html">CLI</a>
+      <a class="prod" href="agents.html">Агенты</a>
+      <a class="prod" href="editor.html">Редактор</a>
+      <a class="navbtn" href="https://github.com/Levos06/xc">GitHub ↗</a>
     </div>
   </div>
 </nav>
 
 <header class="hero">
   <div class="wrap">
-    <span class="badge">Explained Code · открытый формат</span>
-    <h1 class="title">Код и смысл — <br><span class="x">в одном файле</span></h1>
+    <span class="pill"><span class="g"></span> Explained Code · открытый формат</span>
+    <h1>Код и смысл —<br><span class="accent">в одном файле.</span></h1>
     <p class="lead">
       <code>.xc</code> хранит исполняемый код вместе с его смысловым слоем —
       архитектурным контекстом, инвариантами и требованиями — так, чтобы это
       оставалось понятным людям, инструментам и языковым моделям.
     </p>
     <div class="cta">
-      <a class="btn primary" href="#demo">Посмотреть демо</a>
-      <a class="btn" href="https://github.com/Levos06/xc">Репозиторий →</a>
+      <a class="btn primary" href="editor.html#demo">Живое демо →</a>
+      <a class="btn" href="#idea">В чём идея</a>
     </div>
   </div>
 </header>
 
 <section id="idea">
-  <div class="wrap">
-    <div class="eyebrow">Зачем</div>
-    <h2>Документация внутри кода — это старо. Сделать её надёжной для автоматики — нет.</h2>
-    <p class="sub">Три инженерных принципа лежат в основе формата и проверяются тестами.</p>
-    <div class="grid3">
-      <div class="card">
-        <span class="ic">🧱</span>
-        <h3>Изоляция слоёв (LangSec)</h3>
-        <p>Один построчный, тотальный распознаватель за O(n). Код внутри блока никогда не парсится как разметка и наоборот — никаких «двух парсеров».</p>
-      </div>
-      <div class="card">
-        <span class="ic">🧭</span>
-        <h3>Planning Conditioning</h3>
-        <p>Объяснение и инварианты физически идут раньше кода. Модель сначала фиксирует план и граничные случаи, затем пишет реализацию.</p>
-      </div>
-      <div class="card">
-        <span class="ic">🔇</span>
-        <h3>Без diff-шума</h3>
-        <p>Извлечение кода зависит только от блока <code>MONOLITH</code>: правки прозы не меняют код и его хэш. В git правка текста даёт пустой diff.</p>
-      </div>
+  <div class="wrap grid2" style="align-items:center; gap:48px;">
+    <div>
+      <div class="eyebrow">Идея</div>
+      <h2>Документация и код перестают расходиться.</h2>
+      <p class="lead" style="font-size:18px; color:var(--ink-soft);">
+        В обычном проекте смысл живёт отдельно от кода — в вики, в головах, в
+        устаревших комментариях. <code>.xc</code> делает смысловой слой
+        <em>частью файла</em>: один монолитный блок кода, а над ним — объяснения,
+        привязанные к конкретным строкам.
+      </p>
+      <p style="color:var(--muted);">
+        Код остаётся чистым и компилируемым. Объяснения можно перекрывать,
+        вкладывать и комментировать построчно — не трогая ни байта кода.
+      </p>
     </div>
-  </div>
-</section>
-
-<section id="format">
-  <div class="wrap">
-    <div class="eyebrow">Формат v2</div>
-    <h2>Монолитный код + диапазоны строк</h2>
-    <p class="sub">Код — один блок в конце файла. Блоки объяснений ссылаются на 1-индексные строки кода маркером <code>lines:</code> (диапазоны могут пересекаться).</p>
-<pre class="sample"><span class="tok-fm">---
+    <div>
+<pre class="sample"><span class="t-fm">---
 xc_spec: "2.0"
 language: "python"
-module: "core.auth"
 ---</span>
 
-<span class="tok-h"># [EXPLANATION: overview]</span>
-<span class="tok-lines">lines: 1-6</span>
-<span class="tok-md">## Архитектурный контекст
-Проверяет сессионный токен перед обработкой запроса.</span>
+<span class="t-h"># [EXPLANATION: overview]</span>
+<span class="t-lines">lines: 1-6</span>
+<span class="t-com">## Архитектурный контекст
+Проверяет сессионный токен перед обработкой.</span>
 
-<span class="tok-h"># [EXPLANATION: fail_closed]</span>
-<span class="tok-lines">lines: 4-5</span>
-<span class="tok-md">## Инвариант безопасности
-Токен без поля `exp` отвергается (fail-closed).</span>
+<span class="t-h"># [EXPLANATION: fail_closed]</span>
+<span class="t-lines">lines: 4-5</span>
+<span class="t-com">## Инвариант
+Нет поля `exp` → отказ (fail-closed).</span>
 
-<span class="tok-h"># [CODE: MONOLITH]</span>
-<span class="tok-fence">```python</span>
-<span class="tok-kw">import</span> time
-
-<span class="tok-kw">def</span> <span class="tok-fn">verify_session</span>(token: dict) -> bool:
-    <span class="tok-kw">if</span> <span class="tok-str">"exp"</span> <span class="tok-kw">not in</span> token:
-        <span class="tok-kw">return</span> <span class="tok-num">False</span>
-    <span class="tok-kw">return</span> token[<span class="tok-str">"exp"</span>] > time.time()
-<span class="tok-fence">```</span></pre>
+<span class="t-h"># [CODE: MONOLITH]</span>
+<span class="t-fm">```python</span>
+<span class="t-kw">import</span> time
+<span class="t-kw">def</span> <span class="t-fn">verify_session</span>(token):
+    <span class="t-kw">if</span> <span class="t-str">"exp"</span> <span class="t-kw">not in</span> token:
+        <span class="t-kw">return</span> <span class="t-num">False</span>
+    <span class="t-kw">return</span> token[<span class="t-str">"exp"</span>] > time.time()
+<span class="t-fm">```</span></pre>
+    </div>
   </div>
 </section>
 
-<section id="demo">
+<section id="philosophy">
   <div class="wrap">
-    <div class="eyebrow">Вьюер</div>
-    <h2>Два режима отображения</h2>
-    <p class="sub">Так это выглядит в расширении для VS Code / Cursor. Наводите курсор на строки кода, переключайте режимы, в «Сетке» — кликайте по ячейке, чтобы раскрыть её целиком.</p>
-
-    <div class="demo">
-      <div class="demo-bar">
-        <span class="name">auth.xc</span>
-        <div class="modes" id="modes">
-          <button data-mode="context">Контекст</button>
-          <button data-mode="grid" class="active">Сетка</button>
-        </div>
+    <div class="eyebrow">Философия</div>
+    <h2>Три принципа, которые делают формат надёжным.</h2>
+    <p class="sub">Это не лозунги — каждый из них заложен в реализацию и проверяется тестами.</p>
+    <div class="principles">
+      <div class="principle">
+        <div class="n">01</div>
+        <h3>Изоляция слоёв</h3>
+        <p>Один построчный, тотальный распознаватель за O(n). Код внутри блока никогда не парсится как разметка и наоборот — никакой патологии «двух парсеров» (LangSec).</p>
       </div>
-      <div class="demo-body">
-        <div class="demo-code" id="code"></div>
-        <div class="demo-right">
-          <div class="ctx" id="ctx"></div>
-          <div class="gr" id="gr"></div>
-        </div>
+      <div class="principle">
+        <div class="n">02</div>
+        <h3>Planning Conditioning</h3>
+        <p>Объяснения и инварианты физически расположены раньше кода. Модель сначала фиксирует план и граничные случаи, и лишь затем пишет реализацию.</p>
+      </div>
+      <div class="principle">
+        <div class="n">03</div>
+        <h3>Без diff-шума</h3>
+        <p>Извлечение кода зависит только от блока кода: правка прозы не меняет ни строки кода, ни его хэш. В <code>git</code> правка текста даёт пустой diff.</p>
       </div>
     </div>
-    <p class="hint">В «Контексте» карточка появляется при наведении на строку. В «Сетке» строки справа выровнены со строками кода 1:1; блок занимает строки до начала следующего, клик раскрывает его целиком.</p>
   </div>
 </section>
 
-<section id="components">
+<section id="products">
   <div class="wrap">
     <div class="eyebrow">Экосистема</div>
-    <h2>Три инструмента, один парсер</h2>
-    <p class="sub">CLI, инструменты для агентов и расширение редактора используют единый распознаватель — Python и TypeScript согласны побайтово о том, где находится код.</p>
-    <div class="comp">
-      <div class="card">
-        <span class="tag">core/ · Python</span>
+    <h2>Три продукта, один распознаватель.</h2>
+    <p class="sub">CLI, инструменты для агентов и расширение редактора используют единое ядро — Python и TypeScript согласны побайтово о том, где находится код.</p>
+    <div class="grid3">
+      <a class="prod-card" href="cli.html">
+        <span class="kicker">01 · CLI</span>
         <h3>xc-cli</h3>
-        <ul class="feat">
-          <li><code>init</code> — обернуть исходник в <code>.xc</code></li>
-          <li><code>extract</code> — чистый код (O(n))</li>
-          <li><code>run</code> — извлечь и выполнить</li>
-          <li><code>validate</code> — структура + YAML, устойчивость к обрыву</li>
-        </ul>
-      </div>
-      <div class="card">
-        <span class="tag">mcp/ · MCP</span>
+        <p>Детерминированная утилита: обернуть исходник, извлечь чистый код, запустить, проверить структуру. Основа всей экосистемы.</p>
+        <span class="go">Подробнее →</span>
+      </a>
+      <a class="prod-card" href="agents.html">
+        <span class="kicker">02 · MCP</span>
         <h3>Инструменты агентов</h3>
-        <ul class="feat">
-          <li><code>extract_code_layer</code></li>
-          <li><code>update_explanation_block</code> — правка прозы, хэш кода неизменен</li>
-          <li><code>generate_explained_artifact</code> — план-первый</li>
-          <li><code>explanation_gate</code> — Teach-Back барьер (SOLO)</li>
-        </ul>
-      </div>
-      <div class="card">
-        <span class="tag">vscode-extension/ · TS</span>
-        <h3>Расширение редактора</h3>
-        <ul class="feat">
-          <li>Сплит: код + проза, два режима</li>
-          <li>Подсветка, номера строк, формулы (MathML)</li>
-          <li>Правка/создание/удаление блоков, undo</li>
-          <li>Изолированный git-diff по слоям</li>
-        </ul>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section id="start">
-  <div class="wrap">
-    <div class="eyebrow">Старт</div>
-    <h2>Попробовать локально</h2>
-    <p class="sub">Требуется Python 3.9+ и Node 18+.</p>
-    <div class="steps">
-      <div>
-        <h3 style="font-size:16px;margin:0 0 10px;">CLI и MCP</h3>
-<pre class="cmd"><span class="d"># ядро + CLI</span>
-<span class="c">cd</span> core
-python3 -m venv .venv
-.venv/bin/pip install -e .
-
-<span class="d"># попробовать</span>
-xc-cli validate examples/auth.xc
-xc-cli run examples/auth.xc</pre>
-      </div>
-      <div>
-        <h3 style="font-size:16px;margin:0 0 10px;">Расширение</h3>
-<pre class="cmd"><span class="d"># установить собранный пакет</span>
-code --install-extension \
-  vscode-extension/versions/explained-code-2.2.0.vsix
-
-<span class="d"># или для разработки</span>
-<span class="c">cd</span> vscode-extension
-npm install && npm run compile</pre>
-      </div>
+        <p>Атомарные операции для ИИ-агентов через Model Context Protocol, включая когнитивный барьер Teach-Back против «vibe coding».</p>
+        <span class="go">Подробнее →</span>
+      </a>
+      <a class="prod-card" href="editor.html">
+        <span class="kicker">03 · Редактор</span>
+        <h3>Расширение VS Code</h3>
+        <p>Сплит-вью с двумя режимами отображения прозы, подсветкой, формулами и изолированным git-diff. С живым демо.</p>
+        <span class="go">Открыть демо →</span>
+      </a>
     </div>
   </div>
 </section>
 
 <footer>
   <div class="wrap">
-    <span class="brand"><span class="dot">.</span>xc</span>
+    <a class="brand" href="index.html"><span class="dot">.</span>xc</a>
     <span style="color:var(--faint)">Explained Code — открытый формат и инструментарий.</span>
-    <span style="margin-left:auto"><a href="https://github.com/Levos06/xc">github.com/Levos06/xc</a></span>
+    <div class="cols">
+      <a href="cli.html">CLI</a>
+      <a href="agents.html">Агенты</a>
+      <a href="editor.html">Редактор</a>
+      <a href="https://github.com/Levos06/xc">GitHub</a>
+    </div>
   </div>
 </footer>
 
-<script>
-// ---- interactive two-mode demo (mirrors the extension's grid/context logic) ----
-const CODE = [
-  "import time",
-  "",
-  "def verify_session(token: dict) -> bool:",
-  '    if "exp" not in token:',
-  "        return False",
-  "    return token[\"exp\"] > time.time()",
-];
-const BLOCKS = [
-  { id: "overview",    start: 1, end: 6, html: "<p>Проверяет сессионный токен перед обработкой запроса — единая точка входа.</p>" },
-  { id: "fail_closed", start: 4, end: 5, html: "<p><b>Fail-closed:</b> токена без поля <code>exp</code> достаточно, чтобы отказать.</p>" },
-  { id: "expiry",      start: 6, end: 6, html: "<p>Истёкший токен (<code>exp ≤ now</code>) никогда не принимается.</p>" },
-];
-const LH = 22, PAD = 14;
-let mode = "grid", expanded = null;
-
-const codeEl = document.getElementById("code");
-const ctxEl = document.getElementById("ctx");
-const grEl = document.getElementById("gr");
-const modesEl = document.getElementById("modes");
-
-function blocksForLine(n) { return BLOCKS.filter(b => n >= b.start && n <= b.end); }
-
-function renderCode() {
-  codeEl.innerHTML = "";
-  CODE.forEach((ln, i) => {
-    const row = document.createElement("div");
-    row.className = "ln";
-    row.dataset.line = i + 1;
-    row.innerHTML = '<span class="gut">' + (i + 1) + "</span>" + escapeHtml(ln || " ");
-    row.addEventListener("mouseenter", () => {
-      if (mode === "context") renderContext(i + 1);
-      highlightLines(blocksSpan(blocksForLine(i + 1)));
-    });
-    row.addEventListener("click", () => {
-      const cov = blocksForLine(i + 1);
-      if (mode === "grid" && cov.length) { expanded = cov.reduce((a, b) => b.start > a.start ? b : a).id; renderGrid(); }
-    });
-    codeEl.appendChild(row);
-  });
-}
-function blocksSpan(list) {
-  if (!list.length) return null;
-  return { min: Math.min(...list.map(b => b.start)), max: Math.max(...list.map(b => b.end)) };
-}
-function highlightLines(span) {
-  codeEl.querySelectorAll(".ln").forEach(r => {
-    const n = +r.dataset.line;
-    r.classList.toggle("hot", !!span && n >= span.min && n <= span.max);
-  });
-}
-
-function renderContext(n) {
-  const cards = n ? blocksForLine(n) : [];
-  ctxEl.innerHTML = cards.length
-    ? cards.map(b => '<div class="ctx-card"><div class="blk-id">' + b.id + '</div><div class="md">' + b.html + "</div></div>").join("")
-    : '<div class="empty">Наведите курсор на строку кода.</div>';
-}
-
-function renderGrid() {
-  const starts = BLOCKS.map(b => b.start).sort((a, b) => a - b);
-  grEl.innerHTML = '<div class="lines" style="height:' + (CODE.length * LH) + 'px"></div>';
-  grEl.style.height = (PAD * 2 + CODE.length * LH) + "px";
-  for (let i = 0; i < starts.length; i++) {
-    const s = starts[i];
-    const next = i + 1 < starts.length ? starts[i + 1] : CODE.length + 1;
-    const b = BLOCKS.find(x => x.start === s);
-    const span = next - s;
-    const isExp = b.id === expanded;
-    const cell = document.createElement("div");
-    cell.className = "gcell" + (isExp ? " expanded" : "");
-    cell.style.top = (PAD + (s - 1) * LH) + "px";
-    if (!isExp) cell.style.maxHeight = (span * LH) + "px";
-    cell.innerHTML = '<div class="gcell-head">' + b.id + '</div><div class="md">' + b.html + "</div>";
-    cell.addEventListener("mouseenter", () => highlightLines({ min: b.start, max: b.end }));
-    cell.addEventListener("click", () => { expanded = expanded === b.id ? null : b.id; renderGrid(); });
-    grEl.appendChild(cell);
-  }
-}
-
-function setMode(m) {
-  mode = m;
-  modesEl.querySelectorAll("button").forEach(x => x.classList.toggle("active", x.dataset.mode === m));
-  ctxEl.classList.toggle("on", m === "context");
-  grEl.classList.toggle("on", m === "grid");
-  if (m === "context") renderContext(0); else renderGrid();
-}
-modesEl.querySelectorAll("button").forEach(b => b.addEventListener("click", () => setMode(b.dataset.mode)));
-
-function escapeHtml(s) { return s.replace(/[&<>]/g, c => c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"); }
-
-renderCode();
-setMode("grid");
-</script>
 </body>
 </html>
