@@ -92,45 +92,54 @@ def update_explanation_block(xc_content: str, block_id: str, new_explanation: st
 def generate_explained_artifact(
     language: str,
     module: str,
-    explanation_markdown: str,
     code: str,
-    block_id: str = "main_logic",
-    edge_cases: Optional[list[str]] = None,
+    explanations: list,
     write_path: Optional[str] = None,
 ) -> dict:
-    """Assemble a valid .xc document, ENFORCING plan-first ordering.
+    """Assemble a valid v2 .xc document (monolithic code + line-range prose),
+    ENFORCING plan-first authoring.
 
-    The agent must supply the semantic layer (`explanation_markdown`, and
-    optionally `edge_cases`) which is emitted *before* the `code`. This bakes
-    Planning Conditioning into the artifact: the explanation/invariants
-    physically precede the implementation.
+    `code` is the whole program (one block). `explanations` is a list of
+    ``{"block_id": str, "lines": str, "markdown": str}`` items, each binding
+    prose to a 1-indexed line range of the code (e.g. ``"5-8"`` or ``"3, 11-13"``).
+    The agent must supply at least one explanation BEFORE the artifact is built
+    (Planning Conditioning), and every block must declare its line range.
     """
-    if not explanation_markdown.strip():
+    if not explanations:
         raise ValueError(
-            "explanation_markdown is empty: an explained artifact must state "
-            "its plan and invariants BEFORE the code (Planning Conditioning)."
+            "no explanations supplied: an explained artifact must state its "
+            "plan/invariants (with line ranges) before the code."
+        )
+    if not code.strip():
+        raise ValueError("code is empty")
+
+    prose_parts = []
+    for e in explanations:
+        block_id = str(e.get("block_id") or e.get("id") or "").strip()
+        line_spec = str(e.get("lines") or "").strip()
+        markdown = str(e.get("markdown") or "").strip()
+        if not block_id or not line_spec:
+            raise ValueError(
+                "each explanation needs a 'block_id' and a 'lines' range"
+            )
+        prose_parts.append(
+            f"# [EXPLANATION: {block_id}]\n"
+            f"lines: {line_spec}\n"
+            f"{markdown}\n"
         )
 
     fence = xc.core._choose_fence(code)
-    edge_md = ""
-    if edge_cases:
-        edge_md = "\n## Граничные условия (edge cases)\n" + "".join(
-            f"* {c}\n" for c in edge_cases
-        )
-
     body = code.rstrip("\n")
     doc = (
         "---\n"
-        'xc_spec: "1.0"\n'
+        'xc_spec: "2.0"\n'
         f'language: "{language}"\n'
         f'module: "{module}"\n'
-        "always_apply: true\n"
         "---\n"
         "\n"
-        f"# [EXPLANATION: {block_id}]\n"
-        f"{explanation_markdown.rstrip()}\n"
-        f"{edge_md}\n"
-        f"# [CODE: {block_id}]\n"
+        + "\n".join(prose_parts)
+        + "\n"
+        f"# [CODE: {xc.MONOLITH_ID}]\n"
         f"{fence}{language}\n"
         f"{body}\n"
         f"{fence}\n"
@@ -215,14 +224,11 @@ def build_server():
 
     @mcp.tool()
     def generate_explained_artifact_tool(
-        language: str, module: str, explanation_markdown: str, code: str,
-        block_id: str = "main_logic", edge_cases: Optional[list[str]] = None,
+        language: str, module: str, code: str, explanations: list,
         write_path: Optional[str] = None,
     ) -> dict:
-        """Assemble a .xc artifact, explanation/invariants emitted BEFORE code."""
-        return generate_explained_artifact(
-            language, module, explanation_markdown, code, block_id, edge_cases, write_path
-        )
+        """Assemble a v2 .xc artifact: monolithic code + line-range explanations."""
+        return generate_explained_artifact(language, module, code, explanations, write_path)
 
     @mcp.tool()
     def explanation_gate_tool(

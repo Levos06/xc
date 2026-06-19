@@ -1,35 +1,60 @@
 ---
-xc_spec: "1.0"
+xc_spec: "2.0"
 language: "python"
 module: "core.auth.session"
-always_apply: true
 author: "Levos06"
-tags: ["auth", "security", "demo"]
 ---
 
-# [EXPLANATION: imports_and_config]
-## 🧱 Фундамент модуля
+# [EXPLANATION: overview]
+lines: 1-86
+## 🧱 Сервис аутентификации
+Монолитный модуль: хэширование паролей, HMAC-токены и простой rate-limiter.
+Описания ниже привязаны к диапазонам строк кода справа.
 
-Этот слой задаёт **импорты** и **конфигурационные константы** всего сервиса
-аутентификации. Он намеренно вынесен первым блоком: всё, что объявлено здесь,
-доступно остальным блокам после склейки через `xc-cli extract`.
+# [EXPLANATION: config]
+lines: 7-12
+## Конфигурация
+Единственный источник «магических чисел».
 
-### Конфигурация
+| Константа | Значение |
+|-----------|----------|
+| `TOKEN_TTL` | 3600 c |
+| `MAX_ATTEMPTS` | 5 |
+| `PBKDF2_ROUNDS` | 120 000 |
 
-| Константа | Значение | Назначение |
-|-----------|----------|------------|
-| `TOKEN_TTL` | `3600` | время жизни токена, сек |
-| `MAX_ATTEMPTS` | `5` | порог rate-limiter |
-| `PBKDF2_ROUNDS` | `120_000` | стоимость хэширования пароля |
+# [EXPLANATION: secret_key]
+lines: 14
+## Секретный ключ
+В демо ключ зашит; в проде — только из окружения (**fail-closed**).
 
-### Инварианты
-* Все «магические числа» живут **только здесь** — ниже по коду их быть не должно.
-* `SECRET_KEY` в демо зашит, в проде обязан приходить из окружения (`fail-closed`).
+# [EXPLANATION: hashing]
+lines: 17-34
+## 🔐 Хэширование паролей
+`PBKDF2-HMAC-SHA256` со случайной солью. Время атаки растёт линейно по числу
+итераций $c$:
 
-> 💡 Подсказка для теста фокуса: поставьте курсор на строку `PBKDF2_ROUNDS`
-> слева — справа должен подсветиться именно этот блок.
+$$T_{\text{attack}} \approx N \cdot c \cdot t_{\text{sha}}.$$
 
-# [CODE: imports_and_config]
+# [EXPLANATION: timing_safe]
+lines: 34
+## Сравнение в постоянное время
+`hmac.compare_digest` — защита от timing-атак (вложенный диапазон внутри `hashing`).
+
+# [EXPLANATION: tokens]
+lines: 37-55
+## 🎫 Сессионные токены
+Подпись:
+
+$$\mathrm{sig} = \mathrm{HMAC}_K(m) = H\!\big((K \oplus \mathrm{opad}) \,\|\, H((K \oplus \mathrm{ipad}) \,\|\, m)\big).$$
+
+Валиден ⇔ подпись совпала **и** $\exp > t_{\text{now}}$.
+
+# [EXPLANATION: rate_limiter]
+lines: 58-78
+## 🚦 Rate-limiter
+После `MAX_ATTEMPTS` неудач аккаунт блокируется на `WINDOW` секунд.
+
+# [CODE: MONOLITH]
 ```python
 import hashlib
 import hmac
@@ -38,45 +63,15 @@ import time
 from dataclasses import dataclass
 
 # --- Конфигурация (единственный источник магических чисел) ---
-TOKEN_TTL = 3600           # сек
-MAX_ATTEMPTS = 5           # попыток до блокировки
-PBKDF2_ROUNDS = 120_000    # итераций PBKDF2
+TOKEN_TTL = 3600
+MAX_ATTEMPTS = 5
+PBKDF2_ROUNDS = 120_000
 SALT_BYTES = 16
+WINDOW = 300
 
-# В демо ключ зашит; в проде — os.environ["SECRET_KEY"].
 SECRET_KEY = os.environ.get("SECRET_KEY", "demo-insecure-key").encode("utf-8")
-```
 
-# [EXPLANATION: password_hashing]
-## 🔐 Хэширование паролей
 
-Пароли **никогда** не хранятся в открытом виде. Используем `PBKDF2-HMAC-SHA256`
-со случайной солью на каждого пользователя.
-
-### Контракт функций
-1. `hash_password(password)` → строка вида `salt_hex$digest_hex`.
-2. `verify_password(password, stored)` → `bool`, сравнение в постоянное время.
-
-### Граничные условия (edge cases)
-- [ ] Пустой пароль → всё равно хэшируется (не падаем), но это не значит «валиден».
-- [x] Сравнение через `hmac.compare_digest` — защита от timing-атак.
-- [x] Соль уникальна на запись, поэтому одинаковые пароли дают **разные** хэши.
-
-```text
-password ──salt──► PBKDF2 (120k раундов) ──► digest
-```
-
-### Стоимость атаки перебором
-Число итераций $c = 120000$ умышленно делает один хэш дорогим. Время полного
-перебора словаря растёт линейно по $c$:
-
-$$T_{\text{attack}} \;\approx\; N \cdot c \cdot t_{\text{sha}},$$
-
-где $N$ — размер словаря кандидатов, а $t_{\text{sha}}$ — время одного раунда
-`SHA-256`. Удваивая $c$, мы удваиваем стоимость атаки, не трогая остальной код.
-
-# [CODE: password_hashing]
-```python
 def hash_password(password: str) -> str:
     salt = os.urandom(SALT_BYTES)
     digest = hashlib.pbkdf2_hmac(
@@ -95,34 +90,8 @@ def verify_password(password: str, stored: str) -> bool:
         "sha256", password.encode("utf-8"), salt, PBKDF2_ROUNDS
     )
     return hmac.compare_digest(candidate.hex(), digest_hex)
-```
 
-# [EXPLANATION: token_logic]
-## 🎫 Сессионные токены
 
-Токен — это подписанная строка `payload.signature`, где `payload` содержит имя
-пользователя и метку истечения `exp`.
-
-### Почему именно так
-* **Подпись HMAC** не даёт подделать `payload` без `SECRET_KEY`.
-* Поле `exp` проверяется на стороне сервера — даже валидная подпись не спасёт
-  просроченный токен (**fail-closed**).
-
-### Подпись
-Подпись считается как HMAC поверх полезной нагрузки:
-
-$$\mathrm{sig} \;=\; \mathrm{HMAC}_K(m) \;=\; H\!\big((K \oplus \mathrm{opad}) \,\|\, H((K \oplus \mathrm{ipad}) \,\|\, m)\big).$$
-
-Токен считается валидным тогда и только тогда, когда
-$\mathrm{sig} = \mathrm{HMAC}_K(\text{payload})$ **и** $\exp > t_{\text{now}}$.
-
-### Инварианты безопасности
-1. Токен **невалиден**, если истёк (`exp <= now`).
-2. Токен **невалиден**, если подпись не совпадает.
-3. Отсутствие/искажение `exp` трактуется как невалидный токен, а не как «вечный».
-
-# [CODE: token_logic]
-```python
 def issue_token(username: str, now: float | None = None) -> str:
     now = time.time() if now is None else now
     exp = int(now + TOKEN_TTL)
@@ -135,40 +104,13 @@ def verify_token(token: str, now: float | None = None) -> bool:
     now = time.time() if now is None else now
     try:
         payload, sig = token.rsplit(".", 1)
-        username, exp_str = payload.split(":")
-        exp = int(exp_str)
-    except (ValueError, AttributeError):
+        exp = int(payload.split(":")[1])
+    except (ValueError, IndexError):
         return False
-    expected = hmac.new(
-        SECRET_KEY, payload.encode("utf-8"), hashlib.sha256
-    ).hexdigest()
+    expected = hmac.new(SECRET_KEY, payload.encode("utf-8"), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(sig, expected):
         return False
     return exp > now
-```
-
-# [EXPLANATION: rate_limiter]
-## 🚦 Ограничение попыток входа
-
-Простой in-memory rate-limiter: после `MAX_ATTEMPTS` неудачных попыток аккаунт
-временно блокируется. Защищает от перебора паролей (brute-force).
-
-### Состояние
-Хранится в словаре `username -> RateState`. В проде это был бы Redis с TTL.
-
-### Граничные условия
-- Успешный вход **сбрасывает** счётчик.
-- Блокировка снимается автоматически по истечении окна (`WINDOW`).
-- Неизвестный пользователь обрабатывается так же, как известный (не раскрываем,
-  существует ли аккаунт — анти-enumeration).
-
-## Описание выделенного фрагмента
-
-Опишите здесь
-
-# [CODE: rate_limiter]
-```python
-WINDOW = 300  # окно блокировки, сек
 
 
 @dataclass
@@ -194,96 +136,10 @@ def record_failure(username: str, now: float | None = None) -> None:
         st.blocked_until = now + WINDOW
 
 
-def record_success(username: str) -> None:
-    _rate.pop(username, None)
-```
-
-# [EXPLANATION: user_store]
-## 👤 Хранилище пользователей и вход
-
-Минимальное in-memory хранилище и функция `login`, связывающая все слои воедино:
-проверка блокировки → проверка пароля → выдача токена.
-
-### Поток `login`
-```text
-login(user, pass)
-   ├─ is_blocked?            ─► True  → отказ
-   ├─ verify_password?       ─► False → record_failure → отказ
-   └─ ok                     ─► record_success → issue_token
-```
-
-### Чек-лист ревью
-- [x] Не логируем пароли.
-- [x] Единая ветка отказа (нельзя по тайму различить «нет юзера» и «неверный пароль»).
-- [ ] TODO: вынести хранилище в БД.
-
-## Описание выделенного фрагмента
-
-Опишите здесь
-
-# [CODE: user_store]
-```python
-@dataclass
-class User:
-    username: str
-    password_hash: str
-
-
-_users: dict[str, User] = {}
-
-
-def register(username: str, password: str) -> User:
-    user = User(username=username, password_hash=hash_password(password))
-    _users[username] = user
-    return user
-
-
-def login(username: str, password: str, now: float | None = None) -> str | None:
-    if is_blocked(username, now):
-        return None
-    user = _users.get(username)
-    if user is None or not verify_password(password, user.password_hash):
-        record_failure(username, now)
-        return None
-    record_success(username)
-    return issue_token(username, now)
-```
-
-# [EXPLANATION: note_1]
-## Новый блок
-
-Опишите здесь… ирощи
-
-# [EXPLANATION: demo_main]
-## ▶️ Демонстрация
-
-Запустите файл целиком командой:
-
-```bash
-xc-cli run demo.xc
-```
-
-Сценарий ниже регистрирует пользователя, делает успешный вход, проверяет токен,
-а затем имитирует серию неверных паролей до срабатывания блокировки.
-
-**Ожидаемый вывод:** валидный токен, `verify_token -> True`, и `blocked -> True`
-после `MAX_ATTEMPTS` промахов.
-
-# [CODE: demo_main]
-```python
 if __name__ == "__main__":
-    register("alice", "correct horse battery staple")
-
-    token = login("alice", "correct horse battery staple")
-    print("login ok      ->", token is not None)
-    print("token valid   ->", verify_token(token))
-
-    # Имитируем перебор пароля.
-    for i in range(MAX_ATTEMPTS):
-        login("alice", "wrong-guess")
-    print(f"after {MAX_ATTEMPTS} fails, blocked ->", is_blocked("alice"))
-
-    # Просроченный токен отвергается (now сдвинут далеко в будущее).
-    future = time.time() + TOKEN_TTL + 10
-    print("expired token ->", verify_token(token, now=future))
+    print("expired ->", verify_token("u:0"))
+    print("valid   ->", verify_token(issue_token("alice")))
+    record_failure("bob"); record_failure("bob"); record_failure("bob")
+    record_failure("bob"); record_failure("bob")
+    print("blocked ->", is_blocked("bob"))
 ```

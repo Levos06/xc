@@ -1,20 +1,17 @@
 """
-Isolated, line-surgical edits to .xc documents.
+Isolated edits to the prose layer of a v2 .xc document.
 
-The key guarantee (acceptance criterion #2): rewriting an EXPLANATION block
-touches *only* the lines that belong to that block. The byte range of every
-CODE block — and therefore `extract()`'s output and its hash — is provably
-unchanged. We do this by reusing the recognizer's line boundaries instead of
-re-serializing the whole document.
+Rewriting an EXPLANATION's body touches only that block's lines; the monolithic
+code block is untouched, so `extract()` and its hash are provably unchanged.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import List
 
 from . import parser
-from .core import code_hash, extract
-from .parser import Kind
+from .core import code_hash
 
 
 @dataclass
@@ -25,58 +22,42 @@ class EditResult:
     new_code_hash: str
 
 
-def _block_span(text: str, block_id: str, kind: Kind) -> tuple[int, int]:
-    """Return the [start, end) line indices of a block's *body* (the lines
-    after the heading, up to but excluding the next block heading or EOF).
-
-    For an EXPLANATION block this is exactly the prose region — the only thing
-    we are allowed to rewrite.
-    """
-    lines = parser._normalize(text)
-    result = parser.parse(text)
-
-    target = None
-    for b in result.blocks:
-        if b.block_id == block_id and b.kind is kind:
-            target = b
-            break
-    if target is None:
-        raise KeyError(f"no {kind.value} block with id '{block_id}'")
-
-    start = target.heading_line + 1  # first body line
-    # End = the next block's heading line, or EOF.
-    headings = sorted(b.heading_line for b in result.blocks)
-    end = len(lines)
-    for h in headings:
-        if h > target.heading_line:
-            end = h
-            break
-    return start, end
+def _split(s: str) -> List[str]:
+    return s.replace("\r\n", "\n").replace("\r", "\n").split("\n")
 
 
 def update_explanation_block(text: str, block_id: str, new_body: str) -> EditResult:
-    """Replace the prose body of EXPLANATION block `block_id`.
-
-    Raises KeyError if the block does not exist. Guarantees the extracted code
-    hash is unchanged (and asserts it).
-    """
+    """Replace the markdown body of EXPLANATION `block_id`, preserving its
+    heading and `lines:` marker. Guarantees the code hash is unchanged."""
     old_hash = code_hash(text)
-    lines = parser._normalize(text)
-    start, end = _block_span(text, block_id, Kind.EXPLANATION)
+    result = parser.parse(text)
+    target = result.explanation_by_id(block_id)
+    if target is None:
+        raise KeyError(f"no EXPLANATION block with id '{block_id}'")
 
-    new_lines = new_body.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    # Preserve the single blank separator before the next heading if there was
-    # one, so we don't glue prose onto the following block heading.
-    rebuilt = lines[:start] + new_lines
-    # Re-insert a trailing blank line before the next block if the region we
-    # replaced had one and the new body doesn't end blank.
-    if end < len(lines) and (not new_lines or new_lines[-1].strip() != ""):
+    lines = list(result.lines)
+    # Body starts after the lines: marker (or after heading if absent).
+    body_start = (target.lines_line + 1) if target.lines_line is not None \
+        else (target.heading_line + 1)
+    # Body ends where the recognizer stopped collecting (before the next
+    # heading). Recompute from the next block's heading or the code heading.
+    headings = [e.heading_line for e in result.explanations]
+    if result.code_heading_line is not None:
+        headings.append(result.code_heading_line)
+    body_end = len(lines)
+    for h in sorted(headings):
+        if h > target.heading_line:
+            body_end = h
+            break
+
+    new_lines = _split(new_body)
+    rebuilt = lines[:body_start] + new_lines
+    if body_end < len(lines) and (not new_lines or new_lines[-1].strip() != ""):
         rebuilt.append("")
-    rebuilt += lines[end:]
+    rebuilt += lines[body_end:]
 
     new_text = "\n".join(rebuilt)
     new_hash = code_hash(new_text)
-
     return EditResult(
         text=new_text,
         code_unchanged=(old_hash == new_hash),

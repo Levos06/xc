@@ -6,26 +6,32 @@ edge cases — in a single, version-control-friendly text file, without mixing t
 two in a way that confuses tools, models, or `git`.
 
 A `.xc` file is a valid Markdown document with a fixed block structure. The
-prose explaining a unit of code lives *before* the code; the code lives inside a
-fenced block. Tooling can losslessly pull out the pure code, edit the prose
-without touching the code, and render the two side by side.
+**code is one monolithic block** at the end of the file; the prose lives above
+it as a sequence of explanation blocks, each bound to **1-indexed line ranges**
+of the code (`lines: 5-8`). Tooling can losslessly pull out the pure code, edit
+the prose without touching the code, and render the two side by side — line for
+line. Ranges may overlap freely, so the same code can carry both a high-level
+note and a per-line annotation.
 
 ````markdown
 ---
-xc_spec: "1.0"
+xc_spec: "2.0"
 language: "python"
 module: "core.auth"
 ---
 
-# [EXPLANATION: verify_session]
+# [EXPLANATION: overview]
+lines: 1-7
 ## Architectural context
 Validates session tokens before a request is served.
 
+# [EXPLANATION: exp_invariant]
+lines: 4-7
 ## Security invariants
 * A token with no `exp` field is rejected (fail-closed).
 * An expired token (`exp <= now`) is never accepted.
 
-# [CODE: verify_session]
+# [CODE: MONOLITH]
 ```python
 import time
 
@@ -73,18 +79,20 @@ These are not aspirations — they are enforced and tested (see *Guarantees*).
 
 ## The format
 
-A `.xc` file is:
+A `.xc` file has three zones, top to bottom:
 
-1. An optional YAML **frontmatter** block (`---` … `---`) carrying metadata such
-   as `language` and `module`.
-2. A sequence of **blocks**, each introduced by a heading:
-   - `# [EXPLANATION: <id>]` — Markdown prose (context, invariants, checklists,
-     LaTeX math, tables).
-   - `# [CODE: <id>]` — a single fenced code block holding executable source.
+1. An optional YAML **frontmatter** block (`---` … `---`) with metadata such as
+   `language` and `module`.
+2. A **prose layer**: a sequence of `# [EXPLANATION: <id>]` blocks. Each is
+   immediately followed by a `lines: <ranges>` marker (`lines: 12`,
+   `lines: 5-8, 12-15`) binding it to 1-indexed line ranges of the code, then
+   Markdown content (context, invariants, checklists, tables, LaTeX math).
+3. A **monolithic code block**: exactly one `# [CODE: MONOLITH]` fenced block
+   holding the entire program.
 
-Blocks are paired by their `<id>`: an explanation and the code it describes
-share one id, which is also the anchor used for editor focus-sync. Free-standing
-explanation notes (no code) and code without an explanation are both allowed.
+Because the code is one clean block, `extract` is trivial and the result is an
+ordinary source file. Ranges are independent records, so they may overlap — a
+line can be covered by several explanations at once.
 
 The recognizer is resilient: a file truncated mid-stream (e.g. by an
 interrupted LLM response) still parses up to the last valid boundary, and
@@ -129,7 +137,7 @@ function (`from xc_mcp import …`).
 |------|---------|
 | `extract_code_layer` | Return only the executable code (for a compiler/interpreter). |
 | `update_explanation_block` | Rewrite one explanation in isolation; returns proof the code hash is unchanged. |
-| `generate_explained_artifact` | Assemble a valid `.xc` artifact, **refusing** to emit code without an explanation first (planning conditioning). |
+| `generate_explained_artifact` | Assemble a valid v2 `.xc` artifact from monolithic code + line-range explanations, **refusing** to emit code without at least one explanation (planning conditioning). |
 | `explanation_gate` | A **Teach-Back** gate against "vibe coding": a judge model (temperature 0.1) scores a human's explanation on the SOLO taxonomy and only allows a merge above a threshold. Falls back to a transparent offline heuristic with no API key. |
 
 ```bash
@@ -151,17 +159,22 @@ Tests: `core/.venv/bin/python -m pytest mcp/tests/ -q`.
 Turns the physical `.xc` file into a comfortable two-pane editing experience.
 See [`vscode-extension/README.md`](vscode-extension/README.md) for full details.
 
-- **Split view.** Left: pure code with syntax highlighting and line numbers,
-  editable as a normal file — edits are spliced back into the `.xc` document
-  without touching a single explanation line. Right: rendered Markdown with
-  tables, checklists, and LaTeX math (`$inline$` / `$$display$$`).
-- **Smooth two-way scroll sync.** Block boundaries are treated as anchor points
-  and scroll position is mapped through a monotone cubic spline, so the panes
-  track each other smoothly in both directions and reach their ends together.
-- **Authoring in place.** Edit any explanation inline (✎ or double-click),
-  rename a block, add a block with the **+** affordance between blocks, or select
-  code and *Describe selection* to attach prose to that exact range. Delete a
-  description with undo support.
+- **Split view.** Left: the monolithic code with syntax highlighting and line
+  numbers, editable as a normal file — edits are written back to the code block
+  and every explanation's `lines:` range is automatically shifted to follow.
+  Right: the prose layer in one of two modes.
+- **Grid mode (Excel-style).** The right panel is ruled into rows aligned 1:1
+  with code lines; an explanation renders from its start line and flows down
+  until the next block begins. Scroll is *monolithic* — both panels share a
+  single line index, so visual desync is impossible. Blocks collapse to one
+  row (revealing what's underneath), and several blocks starting on the same
+  line become tabs.
+- **Sticky-context mode.** The right panel shows cards only for the block(s)
+  covering the focused code line, fading as you move.
+- **Authoring in place.** Edit any explanation (id, line range, Markdown) in a
+  floating editor; *Describe selection* attaches prose to selected code lines;
+  delete with undo (Ctrl/Cmd+Z). Tables and LaTeX math (`$…$` / `$$…$$`) render
+  in both modes.
 - **Resizable & swappable panes**, persisted per file.
 - **Isolated git diff.** Dedicated commands open VS Code's native diff over a
   single layer (code-only or explanation-only), HEAD ↔ working tree.
