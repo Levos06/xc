@@ -379,6 +379,21 @@ export function renameBlockId(text: string, oldId: string, newId: string): strin
   return lines.join("\n");
 }
 
+/**
+ * Delete an EXPLANATION block (heading + its prose). Any paired CODE block is
+ * left intact — only the description is removed.
+ */
+export function deleteExplanationBlock(text: string, blockId: string): string {
+  const res = parse(text);
+  const lines = [...res.lines];
+  const b = res.blocks.find((x) => x.kind === "EXPLANATION" && x.blockId === blockId);
+  if (!b) throw new Error(`no EXPLANATION block '${blockId}'`);
+  let end = b.bodyEnd;
+  if (end < lines.length && lines[end].trim() === "") end++; // eat one trailing blank
+  lines.splice(b.headingLine, end - b.headingLine);
+  return lines.join("\n");
+}
+
 export interface DescribeResult {
   ok: boolean;
   message?: string;

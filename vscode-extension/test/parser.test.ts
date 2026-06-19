@@ -10,6 +10,7 @@ import {
   insertExplanationBefore,
   describeSelection,
   renameBlockId,
+  deleteExplanationBlock,
 } from "../src/xcParser";
 
 const SAMPLE = `---
@@ -176,6 +177,14 @@ check("renameBlockId renames both explanation and code headings", () => {
   const r = parse(out);
   assert.ok(r.blocks.some((x) => x.kind === "EXPLANATION" && x.blockId === "alpha"));
   assert.ok(r.blocks.some((x) => x.kind === "CODE" && x.blockId === "alpha"));
+});
+
+check("deleteExplanationBlock removes the description, keeps the code", () => {
+  const out = deleteExplanationBlock(SAMPLE, "a");
+  assert.ok(!out.includes("# [EXPLANATION: a]"));
+  assert.ok(out.includes("# [CODE: a]"), "code block 'a' stays");
+  assert.ok(out.includes("# [EXPLANATION: b]"), "block 'b' untouched");
+  assert.strictEqual(extract(out), extract(SAMPLE), "code layer unchanged");
 });
 
 console.log(`\n${passed} TS parser checks passed.`);

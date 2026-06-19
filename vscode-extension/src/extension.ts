@@ -25,6 +25,7 @@ import {
   insertExplanationBefore,
   describeSelection,
   renameBlockId,
+  deleteExplanationBlock,
 } from "./xcParser";
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
@@ -84,6 +85,10 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
 
     let updatingFromWebview = false;
     let pendingEdit: string | undefined;
+    // Self-contained undo/redo for webview-initiated edits (the webview forwards
+    // Ctrl/Cmd+Z here since it owns the keyboard focus).
+    const undoStack: string[] = [];
+    const redoStack: string[] = [];
 
     const pushToWebview = () => {
       const text = document.getText();
@@ -146,11 +151,20 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
       return `note_${n}`;
     };
 
+    // A mutating change that records an undo checkpoint.
+    const mutate = async (newText: string) => {
+      if (newText === document.getText()) return;
+      undoStack.push(document.getText());
+      if (undoStack.length > 200) undoStack.shift();
+      redoStack.length = 0;
+      await replaceDoc(newText);
+    };
+
     panel.webview.onDidReceiveMessage(async (msg) => {
       const text = document.getText();
       try {
         if (msg.type === "editCode") {
-          await replaceDoc(spliceCode(text, msg.code));
+          await mutate(spliceCode(text, msg.code));
         } else if (msg.type === "editExplanation") {
           let working = text;
           let targetId = msg.blockId;
@@ -165,11 +179,11 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
               targetId = newId;
             }
           }
-          await replaceDoc(setExplanationBody(working, targetId, msg.markdown));
+          await mutate(setExplanationBody(working, targetId, msg.markdown));
         } else if (msg.type === "insertBlock") {
           const id = uniqueNoteId(text);
           pendingEdit = id;
-          await replaceDoc(
+          await mutate(
             insertExplanationBefore(
               text,
               msg.beforeBlockId ?? null,
@@ -188,7 +202,19 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
             vscode.window.showWarningMessage(r.message || "Не удалось привязать описание.");
           } else {
             pendingEdit = r.blockId;
-            await replaceDoc(r.text!);
+            await mutate(r.text!);
+          }
+        } else if (msg.type === "deleteBlock") {
+          await mutate(deleteExplanationBlock(text, msg.blockId));
+        } else if (msg.type === "undo") {
+          if (undoStack.length) {
+            redoStack.push(document.getText());
+            await replaceDoc(undoStack.pop()!);
+          }
+        } else if (msg.type === "redo") {
+          if (redoStack.length) {
+            undoStack.push(document.getText());
+            await replaceDoc(redoStack.pop()!);
           }
         } else if (msg.type === "ready") {
           pushToWebview();
@@ -224,14 +250,13 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
              background: var(--vscode-editor-background); }
   .swap-btn {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-    width: 24px; height: 24px; border-radius: 6px; padding: 0; z-index: 6; cursor: pointer;
+    width: 26px; height: 24px; border-radius: 6px; padding: 0; z-index: 6; cursor: pointer;
     display: flex; align-items: center; justify-content: center;
+    border: none; outline: none; box-shadow: none;
     color: var(--vscode-icon-foreground, var(--vscode-foreground));
-    background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
-    border: 1px solid var(--vscode-panel-border); box-shadow: 0 1px 3px rgba(0,0,0,.3);
+    background: var(--vscode-editor-background);
   }
-  .swap-btn:hover { background: var(--vscode-toolbar-hoverBackground);
-                    border-color: var(--vscode-focusBorder, #007fd4); }
+  .swap-btn:hover { background: var(--vscode-toolbar-hoverBackground); }
   .swap-btn svg { width: 14px; height: 14px; display: block; }
 
   .wrap { display: grid; grid-template-columns: 1fr 7px 1fr; flex: 1 1 auto; min-height: 0; }
@@ -328,17 +353,26 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
              line-height: 1.5; padding: 8px 10px; border-radius: 6px;
              color: var(--vscode-input-foreground); background: var(--vscode-input-background);
              border: 1px solid var(--vscode-focusBorder, #007fd4); outline: none; }
-  /* block-name editor — styled as the title chip itself, not a form input */
-  .xc-edit-id-row { display: flex; align-items: center; gap: 6px; margin: 2px 0 8px; }
+  /* block-name editor — a plain underlined string, no box */
+  .xc-edit-id-row { display: flex; align-items: baseline; gap: 6px; margin: 2px 0 8px; }
   .xc-edit-id-row::before { content: "#"; opacity: .35; font: 600 12px var(--vscode-editor-font-family, monospace); }
   .xc-edit-id {
     font: 600 11px var(--vscode-font-family); letter-spacing: .06em; text-transform: uppercase;
-    color: var(--vscode-foreground); opacity: .65; min-width: 60px;
-    background: transparent; border: 0; border-bottom: 1px dashed var(--vscode-panel-border);
-    padding: 1px 2px; outline: none; }
-  .xc-edit-id:hover { opacity: .85; }
-  .xc-edit-id:focus { opacity: 1; border-bottom-style: solid; border-bottom-color: var(--vscode-focusBorder, #007fd4); }
-  .xc-edit-bar { display: flex; gap: 6px; margin: 6px 0 0; }
+    color: var(--vscode-foreground); opacity: .7;
+    background: none; border: none; border-radius: 0; box-shadow: none;
+    appearance: none; -webkit-appearance: none; outline: none;
+    padding: 0 0 2px; border-bottom: 1px solid var(--vscode-panel-border); }
+  .xc-edit-id:hover { opacity: .9; }
+  .xc-edit-id:focus { opacity: 1; border-bottom-color: var(--vscode-focusBorder, #007fd4); }
+  .xc-edit-bar { display: flex; align-items: center; gap: 6px; margin: 6px 0 0; }
+  .xc-edit-bar .danger {
+    margin-left: auto; color: var(--vscode-errorForeground, #e55);
+    background: transparent; border: 1px solid transparent; border-radius: 4px;
+    width: 26px; height: 26px; padding: 0; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; }
+  .xc-edit-bar .danger:hover { border-color: var(--vscode-errorForeground, #e55);
+    background: var(--vscode-inputValidation-errorBackground, transparent); }
+  .xc-edit-bar .danger svg { width: 14px; height: 14px; display: block; }
   .xc-edit-bar button { font: 500 12px var(--vscode-font-family); cursor: pointer;
              padding: 3px 12px; border-radius: 4px; border: 1px solid var(--vscode-panel-border);
              color: var(--vscode-button-foreground, #fff); background: var(--vscode-button-background, #0e639c); }

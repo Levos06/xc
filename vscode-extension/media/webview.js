@@ -391,10 +391,21 @@ function enterEdit(blk, id) {
   idInput.value = id;
   idInput.spellcheck = false;
   idInput.title = "Имя блока";
-  const sizeId = function () { idInput.style.width = Math.max(6, idInput.value.length + 1) + "ch"; };
-  sizeId();
-  idInput.addEventListener("input", sizeId);
+  const sizeId = function () {
+    // Measure the rendered width (uppercase + letter-spacing) so nothing clips.
+    const cs = getComputedStyle(idInput);
+    const probe = document.createElement("span");
+    probe.style.cssText =
+      "position:absolute;visibility:hidden;white-space:pre;text-transform:uppercase;" +
+      "font:" + cs.font + ";letter-spacing:" + cs.letterSpacing;
+    probe.textContent = idInput.value || " ";
+    document.body.appendChild(probe);
+    idInput.style.width = probe.offsetWidth + 6 + "px";
+    probe.remove();
+  };
   idRow.appendChild(idInput);
+  requestAnimationFrame(sizeId);
+  idInput.addEventListener("input", sizeId);
 
   const ta = document.createElement("textarea");
   ta.className = "xc-edit";
@@ -406,8 +417,13 @@ function enterEdit(blk, id) {
   const cancelB = document.createElement("button");
   cancelB.className = "secondary";
   cancelB.textContent = "Отмена";
+  const delB = document.createElement("button");
+  delB.className = "danger";
+  delB.title = "Удалить блок описания (Ctrl/Cmd+Z — вернуть)";
+  delB.innerHTML = TRASH_SVG;
   bar.appendChild(saveB);
   bar.appendChild(cancelB);
+  bar.appendChild(delB);
 
   if (body) body.style.display = "none";
   blk.insertBefore(idRow, idChip || blk.firstChild); // name sits where the title was
@@ -434,7 +450,17 @@ function enterEdit(blk, id) {
     close();
   });
   cancelB.addEventListener("click", close);
+  delB.addEventListener("click", function () {
+    vscode.postMessage({ type: "deleteBlock", blockId: id });
+    close();
+  });
 }
+
+// trash icon (codicon-ish)
+const TRASH_SVG =
+  '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">' +
+  '<path d="M10 3h3v1h-1v9.5l-.5.5h-7l-.5-.5V4H3V3h3V1.5l.5-.5h3l.5.5V3zM7 3h2V2H7v1zM5 4v9h6V4H5zm2 1h1v7H7V5zm2 0h1v7H9V5z"/>' +
+  "</svg>";
 docPane.addEventListener("dblclick", function (e) {
   const blk = e.target.closest ? e.target.closest(".xc-block") : null;
   if (blk) enterEdit(blk, blk.getAttribute("data-block-id"));
@@ -445,6 +471,22 @@ document.addEventListener("pointerdown", function (e) {
   const t = e.target;
   if (t && t.closest && t.closest(".xc-edit, .xc-edit-id, .xc-edit-id-row, .xc-edit-bar")) return;
   if (docEl.querySelector(".xc-edit")) closeAllEdits();
+});
+
+// Forward undo/redo to the host (which owns the document edit history), unless a
+// text field is focused — there the native field undo should win.
+window.addEventListener("keydown", function (e) {
+  if (!(e.metaKey || e.ctrlKey)) return;
+  const tag = (document.activeElement && document.activeElement.tagName) || "";
+  if (tag === "TEXTAREA" || tag === "INPUT") return;
+  const k = e.key.toLowerCase();
+  if (k === "z" && !e.shiftKey) {
+    e.preventDefault();
+    vscode.postMessage({ type: "undo" });
+  } else if (k === "y" || (k === "z" && e.shiftKey)) {
+    e.preventDefault();
+    vscode.postMessage({ type: "redo" });
+  }
 });
 
 // ---------- add-block "+" affordances + edit pencils ----------
