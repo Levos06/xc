@@ -41,6 +41,8 @@ let raf = 0;
 
 const collapsed = new Set();          // collapsed blockIds
 const activeTab = new Map();          // startLine -> active blockId
+let expandedId = null;                // grid: a single cell expanded to full content
+let hoverLine = 0;                    // context: code line currently hovered
 
 const saved = vscode.getState() || {};
 let mode = saved.mode === "context" ? "context" : "grid"; // grid is the priority default
@@ -54,9 +56,12 @@ function applyOrder() {
   else { slotLeft.appendChild(rightPane); slotRight.appendChild(codePane); }
 }
 function positionSwap() {
-  const g = gutter.getBoundingClientRect();
   const c = curtain.getBoundingClientRect();
+  const g = gutter.getBoundingClientRect();
   swap.style.left = g.left + g.width / 2 - c.left + "px";
+  // mode toggle always centered over the description (right) pane
+  const r = rightPane.getBoundingClientRect();
+  modesEl.style.left = r.left + r.width / 2 - c.left + "px";
 }
 function setSplit(f) {
   leftFraction = Math.max(0.15, Math.min(0.85, f));
@@ -137,7 +142,7 @@ function schedule() {
 }
 function renderRight() {
   if (mode === "grid") renderGrid();
-  else renderContext(caretLine());
+  else renderContext(hoverLine);
 }
 
 function mdCard(b) {
@@ -146,8 +151,12 @@ function mdCard(b) {
 
 // ----- context mode -----
 function renderContext(line1) {
-  const cards = blocksForLine(line1);
-  if (!cards.length) { ctxPane.innerHTML = '<div class="ctx-empty">Нет описаний для текущей строки.</div>'; return; }
+  const cards = line1 ? blocksForLine(line1) : [];
+  if (!cards.length) {
+    ctxPane.innerHTML = '<div class="ctx-empty">' +
+      (line1 ? "Нет описаний для строки " + line1 + "." : "Наведите курсор на строку кода.") + "</div>";
+    return;
+  }
   ctxPane.innerHTML = cards.map(function (b) {
     return '<section class="ctx-card" data-block-id="' + escAttr(b.blockId) + '">' + mdCard(b) + "</section>";
   }).join("");
@@ -203,11 +212,12 @@ function renderCell(blockId, startRow, rowCount, groups) {
   const b = explanations.find(function (x) { return x.blockId === blockId; });
   if (!b) return;
   const isHeader = startRow === b.startLine;
+  const isExpanded = isHeader && blockId === expandedId;
   const cell = document.createElement("div");
-  cell.className = "cell";
+  cell.className = "cell" + (isExpanded ? " expanded" : "");
   cell.setAttribute("data-block-id", blockId);
   cell.style.top = PAD + (startRow - 1) * lineHeight + "px";
-  cell.style.height = rowCount * lineHeight + "px";
+  if (!isExpanded) cell.style.height = rowCount * lineHeight + "px";
 
   const inner = document.createElement("div");
   inner.className = "cell-inner";
@@ -256,7 +266,7 @@ function renderCell(blockId, startRow, rowCount, groups) {
     head.appendChild(actions);
     inner.appendChild(head);
   }
-  if (!(isHeader && collapsed.has(blockId))) {
+  if (isExpanded || !(isHeader && collapsed.has(blockId))) {
     const body = document.createElement("div");
     body.className = "md";
     body.innerHTML = b.html;
@@ -265,7 +275,19 @@ function renderCell(blockId, startRow, rowCount, groups) {
   cell.appendChild(inner);
   cell.addEventListener("mouseenter", function () { const sp = blockSpan(b); if (sp) showBand(sp); });
   cell.addEventListener("mouseleave", function () { showBand(null); });
+  // click the cell body (not a control) toggles full expansion
+  cell.addEventListener("click", function (ev) {
+    if (ev.target && ev.target.closest && ev.target.closest(".cell-btn, .cell-tab")) return;
+    ev.stopPropagation();
+    expandedId = expandedId === blockId ? null : blockId;
+    renderGrid();
+  });
   gridInner.appendChild(cell);
+  if (isExpanded) {
+    // grow the scrollable area so the (now taller) card's tail is reachable
+    const need = cell.offsetTop + cell.offsetHeight + 16;
+    if (need > parseFloat(gridInner.style.height || "0")) gridInner.style.height = need + "px";
+  }
 }
 
 function escAttr(s) { return String(s).replace(/"/g, "&quot;"); }
@@ -274,22 +296,45 @@ function escAttr(s) { return String(s).replace(/"/g, "&quot;"); }
 codeEl.addEventListener("scroll", function () {
   hlPre.scrollTop = codeEl.scrollTop; hlPre.scrollLeft = codeEl.scrollLeft; lineNos.scrollTop = codeEl.scrollTop;
   if (bandRange) showBand(bandRange);
-  if (mode === "grid" && driver === "code") gridPane.scrollTop = codeEl.scrollTop;
-  if (mode === "context") renderContext(topVisibleLine());
+  if (mode === "grid" && driver === "code" && !expandedId) gridPane.scrollTop = codeEl.scrollTop;
   positionDescribe();
 });
-gridPane.addEventListener("scroll", function () { if (mode === "grid" && driver === "grid") codeEl.scrollTop = gridPane.scrollTop; });
+gridPane.addEventListener("scroll", function () { if (mode === "grid" && driver === "grid" && !expandedId) codeEl.scrollTop = gridPane.scrollTop; });
 codePane.addEventListener("wheel", function () { driver = "code"; }, { passive: true });
 codePane.addEventListener("pointerdown", function () { driver = "code"; });
 codeEl.addEventListener("focus", function () { driver = "code"; });
 codeEl.addEventListener("keydown", function () { driver = "code"; });
 gridPane.addEventListener("wheel", function () { driver = "grid"; }, { passive: true });
 gridPane.addEventListener("pointerdown", function () { driver = "grid"; });
+// click empty grid area collapses the expanded cell
+gridPane.addEventListener("click", function (e) {
+  if (e.target && e.target.closest && e.target.closest(".cell")) return;
+  if (expandedId) { expandedId = null; renderGrid(); }
+});
 
-// click code -> highlight covering cell(s)
+// line under the mouse / caret in the code pane (1-indexed)
+function lineAt(clientY) {
+  const rect = codeEl.getBoundingClientRect();
+  const y = clientY - rect.top + codeEl.scrollTop - PAD;
+  return Math.max(1, Math.min(codeLineCount || 1e9, Math.floor(y / lineHeight) + 1));
+}
+// Context mode: hovering code shows the covering block(s) as bordered cards.
+codeEl.addEventListener("mousemove", function (e) {
+  if (mode !== "context") return;
+  const line = lineAt(e.clientY);
+  if (line !== hoverLine) { hoverLine = line; renderContext(line); }
+});
+// click code: grid -> expand & highlight the covering block; context -> pin it
 codeEl.addEventListener("click", function () {
-  const ids = new Set(blocksForLine(caretLine()).map(function (b) { return b.blockId; }));
+  const covering = blocksForLine(caretLine());
+  const ids = new Set(covering.map(function (b) { return b.blockId; }));
   gridInner.querySelectorAll(".cell").forEach(function (c) { c.classList.toggle("active", ids.has(c.getAttribute("data-block-id"))); });
+  if (mode === "grid" && covering.length) {
+    // expand the most specific (greatest start line) covering block
+    const target = covering.reduce(function (a, b) { return b.startLine > a.startLine ? b : a; });
+    expandedId = target.blockId;
+    renderGrid();
+  }
 });
 
 // --------------------------------------------------------------------------- code edits

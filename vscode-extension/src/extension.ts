@@ -199,9 +199,9 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
          font-family: var(--vscode-font-family); color: var(--vscode-foreground); }
 
   .curtain { position: relative; flex: 0 0 var(--curtain-h); height: var(--curtain-h);
-             display: flex; align-items: center; justify-content: center;
              background: var(--vscode-editor-background); }
-  .modes { display: inline-flex; border: 1px solid var(--vscode-panel-border); border-radius: 6px; overflow: hidden; }
+  .modes { position: absolute; top: 50%; transform: translate(-50%, -50%); z-index: 6;
+           display: inline-flex; border: 1px solid var(--vscode-panel-border); border-radius: 6px; overflow: hidden; }
   .modes button { font: 500 11px var(--vscode-font-family); cursor: pointer; padding: 3px 10px;
                   border: 0; background: transparent; color: var(--vscode-foreground); opacity: .7; }
   .modes button.active { background: var(--vscode-button-background, #0e639c);
@@ -270,22 +270,28 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
   .md h1, .md h2, .md h3 { margin: 12px 0 6px; line-height: 1.25; }
   .block-id { font: 600 11px var(--vscode-font-family); letter-spacing: .05em; text-transform: uppercase; opacity: .5; }
 
-  /* context mode */
-  .ctx-pane { position: absolute; inset: 0; overflow: auto; padding: 12px 16px; display: none; }
+  /* context mode — neat bordered cards shown on code hover */
+  .ctx-pane { position: absolute; inset: 0; overflow: auto; padding: 14px 16px; display: none; }
   .ctx-pane.on { display: block; }
-  .ctx-card { padding: 10px 0; border-bottom: 1px solid var(--vscode-panel-border); }
-  .ctx-card:last-child { border-bottom: 0; }
-  .ctx-empty { opacity: .4; font-size: 12px; padding: 12px 0; }
+  .ctx-card { padding: 12px 16px; margin: 0 0 12px; border: 1px solid var(--vscode-panel-border);
+              border-radius: 10px; background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+              box-shadow: 0 2px 10px rgba(0,0,0,.18); }
+  .ctx-empty { opacity: .4; font-size: 12px; padding: 12px 2px; }
 
   /* grid mode */
   .grid-pane { position: absolute; inset: 0; overflow: auto; display: none; }
   .grid-pane.on { display: block; }
   .grid-inner { position: relative; }
   .grid-lines { position: absolute; left: 0; right: 0; pointer-events: none; z-index: 0; }
-  .cell { position: absolute; left: 0; right: 0; overflow: hidden; z-index: 1;
+  .cell { position: absolute; left: 0; right: 0; overflow: hidden; z-index: 1; cursor: pointer;
           border-top: 1px solid var(--vscode-panel-border);
           background: var(--vscode-editor-background); padding: 0 14px; }
   .cell.active { background: var(--vscode-editor-selectionHighlightBackground, rgba(127,127,127,.10)); }
+  /* a clicked cell expands to its full content, floating over the rows below */
+  .cell.expanded { height: auto !important; overflow: visible; z-index: 10; cursor: default;
+                   border: 1px solid var(--vscode-focusBorder, #007fd4); border-radius: 0 0 8px 8px;
+                   background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+                   box-shadow: 0 8px 22px rgba(0,0,0,.4); padding-bottom: 10px; }
   .cell-inner { position: relative; }
   .cell-head { display: flex; align-items: center; gap: 6px; padding-top: 4px; }
   .cell-tabs { display: inline-flex; gap: 4px; flex-wrap: wrap; }
