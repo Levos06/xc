@@ -2,32 +2,34 @@
 
 Abstracts the physical `.xc` file into a developer-friendly experience.
 
+The format is v2: a single monolithic `# [CODE: MONOLITH]` block, with
+explanation blocks bound to it by 1-indexed line ranges (`lines: 5-8`).
+
 ## Features
 
 - **Split view custom editor** for `*.xc`:
-  - **Left:** pure executable code in an editable pane with **syntax
-    highlighting** (highlight.js). Edits are spliced back into the `.xc`
-    document without disturbing any explanation line — the code's byte range
-    and hash only change when you actually change code.
-  - **Right:** rendered Markdown explanations with tables, checklists and
-    **LaTeX math** (`$inline$` / `$$display$$`, rendered to MathML via Temml).
-  - **Resizable divider** (drag the gutter); width and pane order are
-    remembered per file.
-  - **Swap sides** via the ⇄ icon on the divider.
-- **Editing explanations:** hover a block and click ✎ (or double-click it) to
-  edit its Markdown inline; ⌘/Ctrl+Enter saves, Esc cancels. Hover the gap
-  between blocks for a **＋** to insert a new block. Select code on the left and
-  click **＋ Описать выделение** to attach a description to that exact range —
-  appended as a sub-section if the code is already covered by a block, or a new
-  block anchored to the selected code if it was undocumented.
-- **Smooth two-way scroll sync:** scrolling either pane drives the other
-  continuously. Code-block starts and their explanation sections are treated as
-  anchor points and the scroll position is linearly interpolated between them,
-  so the panes track each other smoothly instead of snapping. The active block
-  is highlighted. A driver-election guard prevents feedback loops.
-- **Isolated git diff:** `XC: Diff Code Layer` and `XC: Diff Explanation Layer`
-  open VS Code's native diff over a single layer (HEAD ↔ working), so prose
-  edits never create code-review noise.
+  - **Left:** the monolithic code with **syntax highlighting** (highlight.js)
+    and line numbers, editable as a normal file. On edit the code block is
+    rewritten and every explanation's `lines:` range is automatically remapped
+    (via an LCS diff) so the prose keeps pointing at the same logical lines.
+  - **Right:** the prose layer, rendered with tables, checklists and **LaTeX
+    math** (`$inline$` / `$$display$$` → MathML via Temml), in one of two modes.
+  - **Resizable divider** + **swap sides** (⇄), persisted per file.
+- **Two display modes**, toggled in the top bar:
+  - **Сетка / Grid (Excel-style, default).** The right panel is ruled into rows
+    aligned 1:1 with code lines. An explanation renders from its start line and
+    flows down until the next block starts; scroll is *monolithic* (one shared
+    line index — desync is impossible). Blocks **collapse** to a single row
+    (revealing the block underneath), and multiple blocks on the same start line
+    become **tabs**.
+  - **Контекст / Sticky context.** The right panel shows cards only for the
+    block(s) whose range covers the focused code line.
+- **Authoring.** Edit a block (id, line range, Markdown) in a floating editor;
+  **Describe selection** attaches prose to selected code lines; **delete** a
+  block with **undo** (Ctrl/Cmd+Z). Click code → highlight the covering block;
+  hover a block → highlight its code lines.
+- **Isolated git diff:** `XC: Diff Code Layer` / `XC: Diff Explanation Layer`
+  open VS Code's native diff over a single layer (HEAD ↔ working).
 
 ## Develop / run
 

@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>.xc — Explained Code</title>
+<meta name="description" content="Открытый формат, объединяющий исполняемый код и его смысловой слой в одном файле — понятном людям, инструментам и языковым моделям." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,500;1,9..144,600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<nav class="top">
+  <div class="wrap">
+    <a class="brand" href="index.html"><span class="dot">.</span>xc</a>
+    <div class="links">
+      <a href="#idea">Идея</a>
+      <a href="#philosophy">Философия</a>
+      <a class="prod" href="cli.html">CLI</a>
+      <a class="prod" href="agents.html">Агенты</a>
+      <a class="prod" href="editor.html">Редактор</a>
+      <a class="navbtn" href="https://github.com/Levos06/xc">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <span class="pill"><span class="g"></span> Explained Code · открытый формат</span>
+    <h1>Код и смысл —<br><span class="accent">в одном файле.</span></h1>
+    <p class="lead">
+      <code>.xc</code> хранит исполняемый код вместе с его смысловым слоем —
+      архитектурным контекстом, инвариантами и требованиями — так, чтобы это
+      оставалось понятным людям, инструментам и языковым моделям.
+    </p>
+    <div class="cta">
+      <a class="btn primary" href="editor.html#demo">Живое демо →</a>
+      <a class="btn" href="#idea">В чём идея</a>
+    </div>
+  </div>
+</header>
+
+<section id="idea">
+  <div class="wrap grid2" style="align-items:center; gap:48px;">
+    <div>
+      <div class="eyebrow">Идея</div>
+      <h2>Документация и код перестают расходиться.</h2>
+      <p class="lead" style="font-size:18px; color:var(--ink-soft);">
+        В обычном проекте смысл живёт отдельно от кода — в вики, в головах, в
+        устаревших комментариях. <code>.xc</code> делает смысловой слой
+        <em>частью файла</em>: один монолитный блок кода, а над ним — объяснения,
+        привязанные к конкретным строкам.
+      </p>
+      <p style="color:var(--muted);">
+        Код остаётся чистым и компилируемым. Объяснения можно перекрывать,
+        вкладывать и комментировать построчно — не трогая ни байта кода.
+      </p>
+    </div>
+    <div>
+<pre class="sample"><span class="t-fm">---
+xc_spec: "2.0"
+language: "python"
+---</span>
+
+<span class="t-h"># [EXPLANATION: overview]</span>
+<span class="t-lines">lines: 1-6</span>
+<span class="t-com">## Архитектурный контекст
+Проверяет сессионный токен перед обработкой.</span>
+
+<span class="t-h"># [EXPLANATION: fail_closed]</span>
+<span class="t-lines">lines: 4-5</span>
+<span class="t-com">## Инвариант
+Нет поля `exp` → отказ (fail-closed).</span>
+
+<span class="t-h"># [CODE: MONOLITH]</span>
+<span class="t-fm">```python</span>
+<span class="t-kw">import</span> time
+<span class="t-kw">def</span> <span class="t-fn">verify_session</span>(token):
+    <span class="t-kw">if</span> <span class="t-str">"exp"</span> <span class="t-kw">not in</span> token:
+        <span class="t-kw">return</span> <span class="t-num">False</span>
+    <span class="t-kw">return</span> token[<span class="t-str">"exp"</span>] > time.time()
+<span class="t-fm">```</span></pre>
+    </div>
+  </div>
+</section>
+
+<section id="philosophy">
+  <div class="wrap">
+    <div class="eyebrow">Философия</div>
+    <h2>Три принципа, которые делают формат надёжным.</h2>
+    <p class="sub">Это не лозунги — каждый из них заложен в реализацию и проверяется тестами.</p>
+    <div class="principles">
+      <div class="principle">
+        <div class="n">01</div>
+        <h3>Изоляция слоёв</h3>
+        <p>Один построчный, тотальный распознаватель за O(n). Код внутри блока никогда не парсится как разметка и наоборот — никакой патологии «двух парсеров» (LangSec).</p>
+      </div>
+      <div class="principle">
+        <div class="n">02</div>
+        <h3>Planning Conditioning</h3>
+        <p>Объяснения и инварианты физически расположены раньше кода. Модель сначала фиксирует план и граничные случаи, и лишь затем пишет реализацию.</p>
+      </div>
+      <div class="principle">
+        <div class="n">03</div>
+        <h3>Без diff-шума</h3>
+        <p>Извлечение кода зависит только от блока кода: правка прозы не меняет ни строки кода, ни его хэш. В <code>git</code> правка текста даёт пустой diff.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="products">
+  <div class="wrap">
+    <div class="eyebrow">Экосистема</div>
+    <h2>Три продукта, один распознаватель.</h2>
+    <p class="sub">CLI, инструменты для агентов и расширение редактора используют единое ядро — Python и TypeScript согласны побайтово о том, где находится код.</p>
+    <div class="grid3">
+      <a class="prod-card" href="cli.html">
+        <span class="kicker">01 · CLI</span>
+        <h3>xc-cli</h3>
+        <p>Детерминированная утилита: обернуть исходник, извлечь чистый код, запустить, проверить структуру. Основа всей экосистемы.</p>
+        <span class="go">Подробнее →</span>
+      </a>
+      <a class="prod-card" href="agents.html">
+        <span class="kicker">02 · MCP</span>
+        <h3>Инструменты агентов</h3>
+        <p>Атомарные операции для ИИ-агентов через Model Context Protocol, включая когнитивный барьер Teach-Back против «vibe coding».</p>
+        <span class="go">Подробнее →</span>
+      </a>
+      <a class="prod-card" href="editor.html">
+        <span class="kicker">03 · Редактор</span>
+        <h3>Расширение VS Code</h3>
+        <p>Сплит-вью с двумя режимами отображения прозы, подсветкой, формулами и изолированным git-diff. С живым демо.</p>
+        <span class="go">Открыть демо →</span>
+      </a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <a class="brand" href="index.html"><span class="dot">.</span>xc</a>
+    <span style="color:var(--faint)">Explained Code — открытый формат и инструментарий.</span>
+    <div class="cols">
+      <a href="cli.html">CLI</a>
+      <a href="agents.html">Агенты</a>
+      <a href="editor.html">Редактор</a>
+      <a href="https://github.com/Levos06/xc">GitHub</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

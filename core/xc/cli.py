@@ -27,7 +27,6 @@ def cmd_init(args: argparse.Namespace) -> int:
         args.path,
         module=args.module,
         language=args.language,
-        block_id=args.block_id,
     )
     if args.output:
         Path(args.output).write_text(out_text, encoding="utf-8")
@@ -81,7 +80,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_init.add_argument("-o", "--output", help="output .xc path (default: <name>.xc)")
     p_init.add_argument("--module", help="module name for frontmatter")
     p_init.add_argument("--language", help="override detected language")
-    p_init.add_argument("--block-id", default="main_logic", help="block id")
     p_init.set_defaults(func=cmd_init)
 
     p_ext = sub.add_parser("extract", help="emit pure code from a .xc file")

@@ -1,36 +1,30 @@
 /**
- * Explained Code (.xc) — VS Code / Cursor extension.
+ * Explained Code (.xc) — VS Code / Cursor extension (format v2, monolithic code).
  *
- * Provides:
- *  1. A custom split-view editor: editable pure code on the left, rendered
- *     Markdown explanations on the right, with caret-driven focus sync.
- *  2. Git diff isolation commands: view a code-only or explanation-only diff so
- *     prose edits never create noise on code review.
- *
- * Layer isolation (LangSec): the document on disk stays a single Markdown-First
- * .xc file. The webview never re-parses code as markup or vice-versa; it edits
- * disjoint line ranges computed by the shared recognizer (xcParser.ts).
+ *  1. A custom split-view editor: editable monolithic code on the left; the
+ *     prose layer on the right in one of two modes — "Sticky context" (cards for
+ *     the focused line) or "Grid" (Excel-style rows aligned 1:1 to code lines).
+ *     Explanation blocks bind to code by 1-indexed line ranges (`lines: 5-8`).
+ *  2. Git diff isolation commands (code-only / explanation-only).
  */
 
 import * as vscode from "vscode";
 import MarkdownIt = require("markdown-it");
 import {
   parse,
-  codeBlocks,
-  codeViews,
   extract,
   extractExplanations,
-  spliceCode,
+  applyCodeEdit,
   setExplanationBody,
-  insertExplanationBefore,
-  describeSelection,
+  setExplanationRange,
   renameBlockId,
+  insertExplanation,
+  deleteExplanationBlock,
+  uniqueId,
+  Range as XcRange,
 } from "./xcParser";
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
-
-// LaTeX math support: $inline$ and $$display$$ rendered to MathML via Temml
-// (no web-font assets needed, so it works offline inside a webview).
 try {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const texmath = require("markdown-it-texmath");
@@ -39,15 +33,12 @@ try {
   md.use(texmath, {
     engine: {
       renderToString: (tex: string, opts: any) =>
-        temml.renderToString(tex, {
-          displayMode: !!(opts && opts.displayMode),
-          throwOnError: false,
-        }),
+        temml.renderToString(tex, { displayMode: !!(opts && opts.displayMode), throwOnError: false }),
     },
     delimiters: "dollars",
   });
 } catch {
-  // Math rendering is optional; prose still renders without it.
+  /* math optional */
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -58,7 +49,6 @@ export function activate(context: vscode.ExtensionContext) {
       { webviewOptions: { retainContextWhenHidden: true } }
     )
   );
-
   context.subscriptions.push(
     vscode.commands.registerCommand("xc.diffCode", () => showIsolatedDiff("code")),
     vscode.commands.registerCommand("xc.diffExplanation", () => showIsolatedDiff("explanation"))
@@ -69,7 +59,6 @@ export function deactivate() {}
 
 class XcEditorProvider implements vscode.CustomTextEditorProvider {
   public static readonly viewType = "xc.splitView";
-
   constructor(private readonly context: vscode.ExtensionContext) {}
 
   public async resolveCustomTextEditor(
@@ -84,34 +73,29 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
 
     let updatingFromWebview = false;
     let pendingEdit: string | undefined;
+    const undoStack: string[] = [];
+    const redoStack: string[] = [];
 
     const pushToWebview = () => {
       const text = document.getText();
       const res = parse(text);
-      const blocks = codeBlocks(res);
-      const explBlocks = res.blocks.filter((b) => b.kind === "EXPLANATION");
-      const rawById: Record<string, string> = {};
-      const explanationHtml = explBlocks
-        .map((b) => {
-          const body = res.lines.slice(b.bodyStart, b.bodyEnd).join("\n");
-          rawById[b.blockId] = body.replace(/\s+$/, "");
-          return `<section class="xc-block" data-block-id="${escapeAttr(b.blockId)}">
-            <div class="xc-block-id">${escapeHtml(b.blockId)}</div>
-            <div class="xc-body">${md.render(body)}</div>
-          </section>`;
-        })
-        .join("\n");
-
+      const explanations = res.explanations.map((e) => {
+        const body = e.bodyLines.join("\n");
+        return {
+          blockId: e.blockId,
+          ranges: e.ranges,
+          startLine: e.ranges.length ? Math.min(...e.ranges.map((r) => r.start)) : 0,
+          raw: body.replace(/\s+$/, ""),
+          html: md.render(body),
+        };
+      });
       panel.webview.postMessage({
         type: "doc",
         code: extract(text),
         codeLang: (res.frontmatterText.match(/language:\s*"?([\w+#-]+)"?/)?.[1]
-          || blocks[0]?.fenceLang || "plaintext").toLowerCase(),
-        explanationHtml,
-        rawById,
-        explanationOrder: explBlocks.map((b) => b.blockId),
-        views: codeViews(res),
-        blockIds: blocks.map((b) => b.blockId),
+          || res.codeFenceLang || "plaintext").toLowerCase(),
+        codeLineCount: res.codeLines.length,
+        explanations,
         errors: res.errors,
         autoEditBlockId: pendingEdit,
       });
@@ -129,35 +113,35 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
       if (newText === document.getText()) return;
       updatingFromWebview = true;
       const edit = new vscode.WorkspaceEdit();
-      edit.replace(
-        document.uri,
-        new vscode.Range(0, 0, document.lineCount, 0),
-        newText
-      );
+      edit.replace(document.uri, new vscode.Range(0, 0, document.lineCount, 0), newText);
       await vscode.workspace.applyEdit(edit);
       updatingFromWebview = false;
       pushToWebview();
     };
+    const mutate = async (newText: string) => {
+      if (newText === document.getText()) return;
+      undoStack.push(document.getText());
+      if (undoStack.length > 200) undoStack.shift();
+      redoStack.length = 0;
+      await replaceDoc(newText);
+    };
 
-    const uniqueNoteId = (text: string): string => {
-      const taken = new Set(parse(text).blocks.map((b) => b.blockId));
-      let n = 1;
-      while (taken.has(`note_${n}`)) n++;
-      return `note_${n}`;
+    const toRanges = (spec: any): XcRange[] => {
+      if (Array.isArray(spec)) return spec as XcRange[];
+      return [];
     };
 
     panel.webview.onDidReceiveMessage(async (msg) => {
       const text = document.getText();
       try {
         if (msg.type === "editCode") {
-          await replaceDoc(spliceCode(text, msg.code));
+          await mutate(applyCodeEdit(text, msg.code));
         } else if (msg.type === "editExplanation") {
           let working = text;
           let targetId = msg.blockId;
           const newId = (msg.newId || "").trim();
           if (newId && newId !== msg.blockId) {
-            const taken = new Set(parse(text).blocks.map((b) => b.blockId));
-            // Reject only a clash with a *different* existing block.
+            const taken = new Set(parse(text).explanations.map((e) => e.blockId));
             if (taken.has(newId)) {
               vscode.window.showWarningMessage(`Идентификатор «${newId}» уже занят.`);
             } else {
@@ -165,36 +149,31 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
               targetId = newId;
             }
           }
-          await replaceDoc(setExplanationBody(working, targetId, msg.markdown));
+          const ranges = toRanges(msg.ranges);
+          if (ranges.length) working = setExplanationRange(working, targetId, ranges);
+          await mutate(setExplanationBody(working, targetId, msg.markdown));
         } else if (msg.type === "insertBlock") {
-          const id = uniqueNoteId(text);
+          const id = uniqueId(text);
+          const line = Math.max(1, msg.line || 1);
           pendingEdit = id;
-          await replaceDoc(
-            insertExplanationBefore(
-              text,
-              msg.beforeBlockId ?? null,
-              id,
-              "## Новый блок\n\nОпишите здесь…"
-            )
-          );
+          await mutate(insertExplanation(text, id, [{ start: line, end: line }], "## Новый блок\n\nОпишите здесь…"));
         } else if (msg.type === "describeSelection") {
-          const r = describeSelection(
-            text,
-            msg.startLine,
-            msg.endLine,
-            "## Описание выделенного фрагмента\n\nОпишите здесь…"
-          );
-          if (!r.ok) {
-            vscode.window.showWarningMessage(r.message || "Не удалось привязать описание.");
-          } else {
-            pendingEdit = r.blockId;
-            await replaceDoc(r.text!);
-          }
+          const id = uniqueId(text);
+          const s = Math.max(1, msg.startLine);
+          const e = Math.max(s, msg.endLine);
+          pendingEdit = id;
+          await mutate(insertExplanation(text, id, [{ start: s, end: e }], "## Описание\n\nОпишите здесь…"));
+        } else if (msg.type === "deleteBlock") {
+          await mutate(deleteExplanationBlock(text, msg.blockId));
+        } else if (msg.type === "undo") {
+          if (undoStack.length) { redoStack.push(document.getText()); await replaceDoc(undoStack.pop()!); }
+        } else if (msg.type === "redo") {
+          if (redoStack.length) { undoStack.push(document.getText()); await replaceDoc(redoStack.pop()!); }
         } else if (msg.type === "ready") {
           pushToWebview();
         }
-      } catch (e: any) {
-        vscode.window.showErrorMessage(`xc: ${e?.message || e}`);
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`xc: ${err?.message || err}`);
       }
     });
   }
@@ -213,25 +192,25 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
 <style>
-  :root { color-scheme: light dark; --curtain-h: 28px; }
+  :root { color-scheme: light dark; --curtain-h: 30px; }
   * { box-sizing: border-box; }
   body { margin: 0; height: 100vh; display: flex; flex-direction: column;
          background: var(--vscode-editor-background);
          font-family: var(--vscode-font-family); color: var(--vscode-foreground); }
 
-  /* thin top "curtain": holds the swap button above the divider */
   .curtain { position: relative; flex: 0 0 var(--curtain-h); height: var(--curtain-h);
              background: var(--vscode-editor-background); }
-  .swap-btn {
-    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-    width: 24px; height: 24px; border-radius: 6px; padding: 0; z-index: 6; cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
-    color: var(--vscode-icon-foreground, var(--vscode-foreground));
-    background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
-    border: 1px solid var(--vscode-panel-border); box-shadow: 0 1px 3px rgba(0,0,0,.3);
-  }
-  .swap-btn:hover { background: var(--vscode-toolbar-hoverBackground);
-                    border-color: var(--vscode-focusBorder, #007fd4); }
+  .modes { position: absolute; top: 50%; transform: translate(-50%, -50%); z-index: 6;
+           display: inline-flex; border: 1px solid var(--vscode-panel-border); border-radius: 6px; overflow: hidden; }
+  .modes button { font: 500 11px var(--vscode-font-family); cursor: pointer; padding: 3px 10px;
+                  border: 0; background: transparent; color: var(--vscode-foreground); opacity: .7; }
+  .modes button.active { background: var(--vscode-button-background, #0e639c);
+                         color: var(--vscode-button-foreground, #fff); opacity: 1; }
+  .swap-btn { position: absolute; top: 50%; transform: translate(-50%, -50%);
+              width: 26px; height: 24px; border-radius: 6px; padding: 0; z-index: 6; cursor: pointer;
+              display: flex; align-items: center; justify-content: center; border: none; outline: none;
+              color: var(--vscode-icon-foreground, var(--vscode-foreground)); background: var(--vscode-editor-background); }
+  .swap-btn:hover { background: var(--vscode-toolbar-hoverBackground); }
   .swap-btn svg { width: 14px; height: 14px; display: block; }
 
   .wrap { display: grid; grid-template-columns: 1fr 7px 1fr; flex: 1 1 auto; min-height: 0; }
@@ -239,52 +218,32 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
   .gutter { cursor: col-resize; background: var(--vscode-panel-border); transition: background .1s; }
   .gutter:hover, .gutter.dragging { background: var(--vscode-focusBorder, #007fd4); }
 
-  /* ---- left: syntax-highlighted editor (transparent textarea over <pre>) ---- */
-  .code-pane { position: relative; flex: 1 1 auto; min-width: 0;
-               background: var(--vscode-editor-background); }
+  /* left: code editor */
+  .code-pane { position: relative; flex: 1 1 auto; min-width: 0; background: var(--vscode-editor-background); }
   .editor { position: absolute; inset: 0; overflow: hidden; --gutter-w: 48px; }
   .editor pre.hl, .editor textarea {
-    margin: 0; border: 0; background: transparent; position: absolute; inset: 0;
-    width: 100%; height: 100%; padding: 12px 12px 12px calc(var(--gutter-w) + 8px); tab-size: 4;
-    font-family: var(--vscode-editor-font-family, monospace);
-    font-size: var(--vscode-editor-font-size, 13px); line-height: 1.5; letter-spacing: 0;
-    white-space: pre;
-  }
-  .editor pre.hl { overflow: hidden; z-index: 1; pointer-events: none;
-                   color: var(--vscode-editor-foreground); }
+    margin: 0; border: 0; background: transparent; position: absolute; inset: 0; width: 100%; height: 100%;
+    padding: 12px 12px 12px calc(var(--gutter-w) + 8px); tab-size: 4;
+    font-family: var(--vscode-editor-font-family, monospace); font-size: var(--vscode-editor-font-size, 13px);
+    line-height: 1.5; letter-spacing: 0; white-space: pre; }
+  .editor pre.hl { overflow: hidden; z-index: 1; pointer-events: none; color: var(--vscode-editor-foreground); }
   .editor pre.hl code { font: inherit; white-space: pre; display: block; background: none; }
-  .editor textarea {
-    z-index: 2; resize: none; outline: none; overflow: auto;
-    color: transparent; caret-color: var(--vscode-editor-foreground);
-  }
+  .editor textarea { z-index: 2; resize: none; outline: none; overflow: auto; color: transparent;
+                     caret-color: var(--vscode-editor-foreground); }
   .editor textarea::selection { background: var(--vscode-editor-selectionBackground, #264f78); }
-  /* line-number gutter (opaque so horizontally-scrolled code slides under it) */
-  .linenos {
-    position: absolute; top: 0; left: 0; bottom: 0; width: var(--gutter-w); z-index: 3;
-    overflow: hidden; text-align: right; padding: 12px 6px 12px 0; box-sizing: border-box;
-    font-family: var(--vscode-editor-font-family, monospace);
-    font-size: var(--vscode-editor-font-size, 13px); line-height: 1.5; white-space: pre;
-    color: var(--vscode-editorLineNumber-foreground, #6e7681);
-    background: var(--vscode-editor-background); user-select: none; pointer-events: none;
-  }
-  /* highlight band for the code lines of a hovered explanation block */
-  .codeband {
-    position: absolute; left: var(--gutter-w); right: 0; z-index: 0; display: none;
-    background: var(--vscode-editor-rangeHighlightBackground, rgba(127,127,127,.12));
-    pointer-events: none;
-  }
-
-  /* floating "describe selection" button */
-  .describe-btn {
-    position: absolute; z-index: 7; display: none; cursor: pointer;
-    font: 500 12px var(--vscode-font-family); padding: 4px 10px; border-radius: 6px;
-    color: var(--vscode-button-foreground, #fff);
-    background: var(--vscode-button-background, #0e639c);
-    border: 1px solid var(--vscode-focusBorder, #007fd4); box-shadow: 0 2px 6px rgba(0,0,0,.35);
-  }
+  .linenos { position: absolute; top: 0; left: 0; bottom: 0; width: var(--gutter-w); z-index: 3; overflow: hidden;
+             text-align: right; padding: 12px 6px 12px 0; box-sizing: border-box;
+             font-family: var(--vscode-editor-font-family, monospace); font-size: var(--vscode-editor-font-size, 13px);
+             line-height: 1.5; white-space: pre; color: var(--vscode-editorLineNumber-foreground, #6e7681);
+             background: var(--vscode-editor-background); user-select: none; pointer-events: none; }
+  .codeband { position: absolute; left: var(--gutter-w); right: 0; z-index: 0; display: none;
+              background: var(--vscode-editor-rangeHighlightBackground, rgba(127,127,127,.12)); pointer-events: none; }
+  .describe-btn { position: absolute; z-index: 7; display: none; cursor: pointer; font: 500 12px var(--vscode-font-family);
+                  padding: 4px 10px; border-radius: 6px; color: var(--vscode-button-foreground, #fff);
+                  background: var(--vscode-button-background, #0e639c); border: 1px solid var(--vscode-focusBorder, #007fd4);
+                  box-shadow: 0 2px 6px rgba(0,0,0,.35); }
   .describe-btn:hover { background: var(--vscode-button-hoverBackground, #1177bb); }
 
-  /* highlight.js token palette (VS Code Dark+ flavoured) */
   .hljs-comment, .hljs-quote, .hljs-doctag { color: #6a9955; font-style: italic; }
   .hljs-keyword, .hljs-literal, .hljs-selector-tag, .hljs-built_in { color: #569cd6; }
   .hljs-string, .hljs-meta .hljs-string { color: #ce9178; }
@@ -294,87 +253,85 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
   .hljs-type, .hljs-title.class_ { color: #4ec9b0; }
   .hljs-meta, .hljs-meta .hljs-keyword { color: #c586c0; }
 
-  /* ---- right: rendered explanations — flowing, no frames ---- */
-  .doc-pane { flex: 1 1 auto; min-width: 0; overflow: auto; padding: 4px 18px 16px; }
-  .xc-block {
-    position: relative; padding: 10px 12px; margin: 0;
-    border-radius: 6px; scroll-margin-top: 12px;
-  }
-  /* shown only on a code click that maps to this block — kept pale */
-  .xc-block.active { background: rgba(127, 127, 127, 0.10); }
-  .xc-block-id {
-    font: 600 11px var(--vscode-font-family); letter-spacing: .05em; text-transform: uppercase;
-    opacity: .45; margin: 2px 0 6px;
-  }
-  .xc-body > :first-child { margin-top: 0; }
-  .xc-block h1, .xc-block h2, .xc-block h3 { margin: 14px 0 6px; line-height: 1.25; }
-  .doc-pane code { background: var(--vscode-textCodeBlock-background); padding: 1px 5px; border-radius: 3px; }
-  .doc-pane pre { background: var(--vscode-textCodeBlock-background); padding: 10px 12px; border-radius: 6px; overflow: auto; }
-  .doc-pane pre code { background: none; padding: 0; }
-  .doc-pane table { border-collapse: collapse; margin: 8px 0; }
-  .doc-pane th, .doc-pane td { border: 1px solid var(--vscode-panel-border); padding: 4px 10px; text-align: left; }
-  .doc-pane blockquote { margin: 8px 0; padding: 4px 12px; opacity: .85;
-                         border-left: 3px solid var(--vscode-focusBorder, #007fd4); }
-  /* MathML (Temml) — larger, no per-formula scrollbar */
-  .doc-pane math { font-size: 1.25em; }
-  .doc-pane eqn, .doc-pane .eqn, .doc-pane math[display="block"] {
-    display: block; margin: 12px 0; overflow: visible; }
-  .doc-pane math[display="block"] { font-size: 1.4em; }
-  .doc-pane .katex-display, .doc-pane .tml-display { overflow: visible; }
+  /* right pane */
+  .right-pane { position: relative; flex: 1 1 auto; min-width: 0; height: 100%; overflow: hidden; }
 
-  /* inline editing */
-  .xc-edit { width: 100%; box-sizing: border-box; min-height: 120px; resize: vertical;
-             font-family: var(--vscode-editor-font-family, monospace); font-size: 13px;
-             line-height: 1.5; padding: 8px 10px; border-radius: 6px;
-             color: var(--vscode-input-foreground); background: var(--vscode-input-background);
-             border: 1px solid var(--vscode-focusBorder, #007fd4); outline: none; }
-  /* block-name editor — styled as the title chip itself, not a form input */
-  .xc-edit-id-row { display: flex; align-items: center; gap: 6px; margin: 2px 0 8px; }
+  /* shared markdown styling */
+  .md code { background: var(--vscode-textCodeBlock-background); padding: 1px 5px; border-radius: 3px; }
+  .md pre { background: var(--vscode-textCodeBlock-background); padding: 10px 12px; border-radius: 6px; overflow: auto; }
+  .md pre code { background: none; padding: 0; }
+  .md table { border-collapse: collapse; margin: 8px 0; }
+  .md th, .md td { border: 1px solid var(--vscode-panel-border); padding: 4px 10px; text-align: left; }
+  .md blockquote { margin: 8px 0; padding: 4px 12px; opacity: .85; border-left: 3px solid var(--vscode-focusBorder, #007fd4); }
+  .md math { font-size: 1.25em; }
+  .md eqn, .md math[display="block"] { display: block; margin: 12px 0; overflow: visible; }
+  .md math[display="block"] { font-size: 1.4em; }
+  .md > :first-child { margin-top: 0; }
+  .md h1, .md h2, .md h3 { margin: 12px 0 6px; line-height: 1.25; }
+  .block-id { font: 600 11px var(--vscode-font-family); letter-spacing: .05em; text-transform: uppercase; opacity: .5; }
+
+  /* context mode — neat bordered cards shown on code hover */
+  .ctx-pane { position: absolute; inset: 0; overflow: auto; padding: 14px 16px; display: none; }
+  .ctx-pane.on { display: block; }
+  .ctx-card { padding: 12px 16px; margin: 0 0 12px; border: 1px solid var(--vscode-panel-border);
+              border-radius: 10px; background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+              box-shadow: 0 2px 10px rgba(0,0,0,.18); }
+  .ctx-empty { opacity: .4; font-size: 12px; padding: 12px 2px; }
+
+  /* grid mode */
+  .grid-pane { position: absolute; inset: 0; overflow: auto; display: none; }
+  .grid-pane.on { display: block; }
+  .grid-inner { position: relative; }
+  .grid-lines { position: absolute; left: 0; right: 0; pointer-events: none; z-index: 0; }
+  .cell { position: absolute; left: 0; right: 0; overflow: hidden; z-index: 1; cursor: pointer;
+          border-top: 1px solid var(--vscode-panel-border);
+          background: var(--vscode-editor-background); padding: 0 14px; }
+  .cell.active { background: var(--vscode-editor-selectionHighlightBackground, rgba(127,127,127,.10)); }
+  /* a clicked cell expands to its full content, floating over the rows below */
+  .cell.expanded { height: auto !important; overflow: visible; z-index: 10; cursor: default;
+                   border: 1px solid var(--vscode-focusBorder, #007fd4); border-radius: 0 0 8px 8px;
+                   background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+                   box-shadow: 0 8px 22px rgba(0,0,0,.4); padding-bottom: 10px; }
+  .cell-inner { position: relative; }
+  .cell-head { display: flex; align-items: center; gap: 6px; padding-top: 4px; }
+  .cell-tabs { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+  .cell-tab { font: 600 10px var(--vscode-font-family); letter-spacing: .04em; text-transform: uppercase;
+              padding: 1px 6px; border-radius: 4px; cursor: pointer; opacity: .55;
+              border: 1px solid transparent; }
+  .cell-tab.active { opacity: 1; border-color: var(--vscode-focusBorder, #007fd4); }
+  .cell-btn { cursor: pointer; border: 0; background: transparent; color: var(--vscode-foreground);
+              opacity: .6; padding: 0 4px; font-size: 12px; }
+  .cell-btn:hover { opacity: 1; }
+  .cell-actions { margin-left: auto; display: inline-flex; gap: 2px; }
+
+  /* inline edit */
+  .xc-edit-id-row { display: flex; align-items: baseline; gap: 6px; margin: 4px 0 6px; }
   .xc-edit-id-row::before { content: "#"; opacity: .35; font: 600 12px var(--vscode-editor-font-family, monospace); }
-  .xc-edit-id {
-    font: 600 11px var(--vscode-font-family); letter-spacing: .06em; text-transform: uppercase;
-    color: var(--vscode-foreground); opacity: .65; min-width: 60px;
-    background: transparent; border: 0; border-bottom: 1px dashed var(--vscode-panel-border);
-    padding: 1px 2px; outline: none; }
-  .xc-edit-id:hover { opacity: .85; }
-  .xc-edit-id:focus { opacity: 1; border-bottom-style: solid; border-bottom-color: var(--vscode-focusBorder, #007fd4); }
-  .xc-edit-bar { display: flex; gap: 6px; margin: 6px 0 0; }
-  .xc-edit-bar button { font: 500 12px var(--vscode-font-family); cursor: pointer;
-             padding: 3px 12px; border-radius: 4px; border: 1px solid var(--vscode-panel-border);
-             color: var(--vscode-button-foreground, #fff); background: var(--vscode-button-background, #0e639c); }
-  .xc-edit-bar button.secondary { color: var(--vscode-foreground);
-             background: var(--vscode-button-secondaryBackground, transparent); }
-  .xc-edit-hint { opacity: .6; font-size: 11px; align-self: center; margin-left: auto; }
+  .xc-edit-id { font: 600 11px var(--vscode-font-family); letter-spacing: .06em; text-transform: uppercase;
+                color: var(--vscode-foreground); opacity: .7; background: none; border: none; border-radius: 0;
+                box-shadow: none; appearance: none; -webkit-appearance: none; outline: none;
+                padding: 0 0 2px; border-bottom: 1px solid var(--vscode-panel-border); }
+  .xc-edit-id:focus { opacity: 1; border-bottom-color: var(--vscode-focusBorder, #007fd4); }
+  .xc-edit-range { font: 12px var(--vscode-editor-font-family, monospace); width: 84px; background: none;
+                   border: none; border-bottom: 1px solid var(--vscode-panel-border); color: var(--vscode-foreground);
+                   outline: none; padding: 0 0 2px; }
+  .xc-edit-range:focus { border-bottom-color: var(--vscode-focusBorder, #007fd4); }
+  .xc-edit { width: 100%; box-sizing: border-box; min-height: 110px; resize: vertical;
+             font-family: var(--vscode-editor-font-family, monospace); font-size: 13px; line-height: 1.5;
+             padding: 8px 10px; border-radius: 6px; color: var(--vscode-input-foreground);
+             background: var(--vscode-input-background); border: 1px solid var(--vscode-focusBorder, #007fd4); outline: none; }
+  .xc-edit-bar { display: flex; align-items: center; gap: 6px; margin: 6px 0 0; }
+  .xc-edit-bar button { font: 500 12px var(--vscode-font-family); cursor: pointer; padding: 3px 12px; border-radius: 4px;
+                        border: 1px solid var(--vscode-panel-border); color: var(--vscode-button-foreground, #fff);
+                        background: var(--vscode-button-background, #0e639c); }
+  .xc-edit-bar button.secondary { color: var(--vscode-foreground); background: var(--vscode-button-secondaryBackground, transparent); }
+  .xc-edit-bar .danger { margin-left: auto; color: var(--vscode-errorForeground, #e55); background: transparent;
+                         border: 1px solid transparent; width: 26px; height: 26px; padding: 0; display: flex;
+                         align-items: center; justify-content: center; }
+  .xc-edit-bar .danger:hover { border-color: var(--vscode-errorForeground, #e55); }
+  .xc-edit-bar .danger svg { width: 14px; height: 14px; }
 
-  /* per-block edit pencil */
-  .edit-btn {
-    position: absolute; top: 8px; right: 6px; width: 24px; height: 24px; border-radius: 5px;
-    cursor: pointer; opacity: 0; transition: opacity .1s; padding: 0;
-    display: flex; align-items: center; justify-content: center;
-    color: var(--vscode-icon-foreground, var(--vscode-foreground));
-    background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
-    border: 1px solid var(--vscode-panel-border); }
-  .edit-btn svg { width: 13px; height: 13px; display: block; }
-  .xc-block:hover .edit-btn { opacity: .9; }
-  .edit-btn:hover { border-color: var(--vscode-focusBorder, #007fd4); }
-
-  /* "+" add-block affordance — centered, with a generous hover catch area */
-  .add-zone { position: relative; height: 8px; margin: 0; }
-  .add-zone .hit { position: absolute; left: 0; right: 0; top: -10px; bottom: -10px; z-index: 1; }
-  .add-zone::before { content: ""; position: absolute; top: 50%; left: 0; right: 0; height: 1px;
-                      background: var(--vscode-panel-border); opacity: 0; transition: opacity .1s; }
-  .add-zone .add-btn {
-    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 2;
-    width: 22px; height: 22px; border-radius: 50%; cursor: pointer; opacity: 0;
-    display: flex; align-items: center; justify-content: center; font-size: 16px; line-height: 1;
-    padding: 0; transition: opacity .1s;
-    color: var(--vscode-foreground); background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
-    border: 1px solid var(--vscode-panel-border); }
-  .add-zone:hover .add-btn, .add-zone:hover::before { opacity: 1; }
-  .add-zone .add-btn:hover { border-color: var(--vscode-focusBorder, #007fd4); }
-
-  .errbar { flex: 0 0 auto; padding: 3px 12px; font-size: 12px;
-            color: var(--vscode-errorForeground, #e55);
+  .errbar { flex: 0 0 auto; padding: 3px 12px; font-size: 12px; color: var(--vscode-errorForeground, #e55);
             background: var(--vscode-inputValidation-errorBackground, transparent);
             border-top: 1px solid var(--vscode-panel-border); }
   .errbar:empty { display: none; }
@@ -382,9 +339,12 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
 </head>
 <body>
   <div class="curtain" id="curtain">
-    <button id="swap" class="swap-btn" title="Поменять стороны местами" aria-label="Поменять стороны">
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"
-           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <div class="modes" id="modes">
+      <button data-mode="context">Контекст</button>
+      <button data-mode="grid">Сетка</button>
+    </div>
+    <button id="swap" class="swap-btn" title="Поменять стороны" aria-label="Поменять стороны">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M2 5.5h9M8 2.5l3 3-3 3"/><path d="M14 10.5H5M8 13.5l-3-3 3-3"/>
       </svg>
     </button>
@@ -395,8 +355,7 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
         <div class="editor">
           <div id="codeband" class="codeband"></div>
           <pre id="hlpre" class="hl" aria-hidden="true"><code id="hl" class="hljs"></code></pre>
-          <textarea id="code" spellcheck="false" autocapitalize="off"
-                    autocomplete="off" autocorrect="off" wrap="off"></textarea>
+          <textarea id="code" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off"></textarea>
           <div id="linenos" class="linenos"></div>
           <button id="describe" class="describe-btn" title="Описать выделенный код">＋ Описать выделение</button>
         </div>
@@ -404,23 +363,23 @@ class XcEditorProvider implements vscode.CustomTextEditorProvider {
     </div>
     <div class="gutter" id="gutter"></div>
     <div class="slot" id="slotRight">
-      <div id="docPane" class="doc-pane"><div id="doc"></div></div>
+      <div id="rightPane" class="right-pane">
+        <div id="ctxPane" class="ctx-pane"></div>
+        <div id="gridPane" class="grid-pane"><div id="gridInner" class="grid-inner"><div id="gridLines" class="grid-lines"></div></div></div>
+      </div>
     </div>
   </div>
   <div id="errbar" class="errbar"></div>
-
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
   }
 }
 
-/**
- * Git diff isolation. Builds a virtual document containing only the code layer
- * (or only the explanation layer) of both the working copy and HEAD, then opens
- * VS Code's native diff editor on the two. Prose edits therefore never appear
- * in the code diff, and vice-versa — eliminating review noise.
- */
+// --------------------------------------------------------------------------- //
+// Git diff isolation (unchanged from v1 — uses extract / extractExplanations).
+// --------------------------------------------------------------------------- //
+
 async function showIsolatedDiff(layer: "code" | "explanation") {
   const editor = vscode.window.activeTextEditor;
   if (!editor || !editor.document.fileName.endsWith(".xc")) {
@@ -429,22 +388,15 @@ async function showIsolatedDiff(layer: "code" | "explanation") {
   }
   const uri = editor.document.uri;
   const project = layer === "code" ? extract : extractExplanations;
-
   const headText = await readHead(uri);
   if (headText === null) {
     vscode.window.showWarningMessage("No git HEAD version found for this file.");
     return;
   }
-
   const left = XcLayerFs.register(`HEAD:${layer}:${uri.path}`, project(headText), layer);
   const right = XcLayerFs.register(`WORK:${layer}:${uri.path}`, project(editor.document.getText()), layer);
-
-  await vscode.commands.executeCommand(
-    "vscode.diff",
-    left,
-    right,
-    `${baseName(uri)} — ${layer} layer (HEAD ↔ working)`
-  );
+  await vscode.commands.executeCommand("vscode.diff", left, right,
+    `${baseName(uri)} — ${layer} layer (HEAD ↔ working)`);
 }
 
 function baseName(uri: vscode.Uri): string {
@@ -456,9 +408,7 @@ async function readHead(uri: vscode.Uri): Promise<string | null> {
     const ext = vscode.extensions.getExtension<any>("vscode.git");
     const git = ext?.isActive ? ext.exports : await ext?.activate();
     const api = git?.getAPI?.(1);
-    const repo = api?.repositories?.find((r: any) =>
-      uri.path.startsWith(r.rootUri.path)
-    );
+    const repo = api?.repositories?.find((r: any) => uri.path.startsWith(r.rootUri.path));
     if (!repo) return null;
     return await repo.show("HEAD", uri.fsPath);
   } catch {
@@ -466,7 +416,6 @@ async function readHead(uri: vscode.Uri): Promise<string | null> {
   }
 }
 
-/** A tiny in-memory FS provider so diff tabs render synthetic layer content. */
 class XcLayerFs implements vscode.FileSystemProvider {
   private static readonly scheme = "xc-layer";
   private static store = new Map<string, Uint8Array>();
@@ -476,39 +425,19 @@ class XcLayerFs implements vscode.FileSystemProvider {
 
   static register(key: string, content: string, layer: string): vscode.Uri {
     if (!this.registered) {
-      vscode.workspace.registerFileSystemProvider(this.scheme, new XcLayerFs(), {
-        isReadonly: true,
-      });
+      vscode.workspace.registerFileSystemProvider(this.scheme, new XcLayerFs(), { isReadonly: true });
       this.registered = true;
     }
     const path = `/${encodeURIComponent(key)}.${layer === "code" ? "code" : "md"}`;
     this.store.set(path, Buffer.from(content, "utf-8"));
     return vscode.Uri.from({ scheme: this.scheme, path });
   }
-
-  readFile(uri: vscode.Uri): Uint8Array {
-    return XcLayerFs.store.get(uri.path) ?? new Uint8Array();
-  }
-  stat(): vscode.FileStat {
-    return { type: vscode.FileType.File, ctime: 0, mtime: 0, size: 0 };
-  }
-  watch(): vscode.Disposable {
-    return new vscode.Disposable(() => {});
-  }
-  readDirectory(): [string, vscode.FileType][] {
-    return [];
-  }
+  readFile(uri: vscode.Uri): Uint8Array { return XcLayerFs.store.get(uri.path) ?? new Uint8Array(); }
+  stat(): vscode.FileStat { return { type: vscode.FileType.File, ctime: 0, mtime: 0, size: 0 }; }
+  watch(): vscode.Disposable { return new vscode.Disposable(() => {}); }
+  readDirectory(): [string, vscode.FileType][] { return []; }
   createDirectory(): void {}
   writeFile(): void {}
   delete(): void {}
   rename(): void {}
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!)
-  );
-}
-function escapeAttr(s: string): string {
-  return escapeHtml(s);
 }

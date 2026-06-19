@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Редактор — .xc</title>
+<meta name="description" content="Расширение VS Code / Cursor для .xc: сплит-вью с двумя режимами, подсветкой, формулами и изолированным git-diff." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,500;1,9..144,600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<nav class="top">
+  <div class="wrap">
+    <a class="brand" href="index.html"><span class="dot">.</span>xc</a>
+    <div class="links">
+      <a href="index.html#idea">Идея</a>
+      <a href="index.html#philosophy">Философия</a>
+      <a class="prod" href="cli.html">CLI</a>
+      <a class="prod" href="agents.html">Агенты</a>
+      <a class="prod active" href="editor.html">Редактор</a>
+      <a class="navbtn" href="https://github.com/Levos06/xc">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<header class="phero">
+  <div class="wrap">
+    <div class="kicker">03 · Редактор</div>
+    <h1>Файл — для машины,<br>интерфейс — для человека.</h1>
+    <p class="lead">Расширение для VS Code и Cursor превращает физический <code>.xc</code>-файл
+      в удобный сплит-вью: слева редактируемый монолитный код, справа — смысловой слой
+      в одном из двух режимов.</p>
+  </div>
+</header>
+
+<section id="demo" style="padding-top:24px;">
+  <div class="wrap">
+    <div class="demo">
+      <div class="demo-bar">
+        <span class="dots"><i></i><i></i><i></i></span>
+        <span class="name">auth.xc</span>
+        <div class="modes">
+          <button data-mode="context">Контекст</button>
+          <button data-mode="grid" class="active">Сетка</button>
+        </div>
+      </div>
+      <div class="demo-body">
+        <div class="demo-code"></div>
+        <div class="demo-right">
+          <div class="ctx"></div>
+          <div class="gr"></div>
+        </div>
+      </div>
+    </div>
+    <p class="sub" style="margin-top:18px; max-width:760px;">
+      <b>Сетка</b> — строки справа выровнены со строками кода 1:1; блок занимает строки до начала
+      следующего, клик раскрывает его целиком, несколько блоков на одной строке становятся вкладками.
+      <b>Контекст</b> — карточка описания появляется при наведении на строку кода.
+      Наведите курсор на код или на карточку — связанные строки подсветятся.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="eyebrow">Возможности</div>
+    <h2>Чтение и авторство в одном месте.</h2>
+    <div class="grid2" style="margin-top:8px;">
+      <div class="card">
+        <span class="ic">🧩</span>
+        <h3>Два режима отображения</h3>
+        <ul class="feat">
+          <li><b>Сетка (Excel-style):</b> прокрутка монолитна — единый индекс строк, рассинхрон невозможен</li>
+          <li>Сворачивание блока в одну строку и вкладки при совпадении начала</li>
+          <li><b>Контекст:</b> карточки только для строки под курсором</li>
+        </ul>
+      </div>
+      <div class="card">
+        <span class="ic">✍️</span>
+        <h3>Авторство</h3>
+        <ul class="feat">
+          <li>Правка блока — <code>id</code>, диапазон строк и Markdown — во всплывающем редакторе</li>
+          <li><b>Описать выделение:</b> привязка прозы к выделенным строкам кода</li>
+          <li>Удаление блока с <code>Ctrl/Cmd+Z</code></li>
+        </ul>
+      </div>
+      <div class="card">
+        <span class="ic">🎨</span>
+        <h3>Богатый рендер</h3>
+        <ul class="feat">
+          <li>Подсветка синтаксиса и номера строк слева</li>
+          <li>Таблицы, чек-листы и формулы LaTeX (<code>$…$</code> → MathML)</li>
+          <li>Правка кода автоматически сдвигает диапазоны <code>lines:</code></li>
+        </ul>
+      </div>
+      <div class="card">
+        <span class="ic">🔀</span>
+        <h3>Изолированный git-diff</h3>
+        <ul class="feat">
+          <li><code>XC: Diff Code Layer</code> — только код</li>
+          <li><code>XC: Diff Explanation Layer</code> — только проза</li>
+          <li>Правки текста не создают шум на код-ревью</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap narrow">
+    <div class="eyebrow">Установка</div>
+    <h2>Поставить за минуту.</h2>
+    <p class="sub">Собранный пакет лежит в репозитории.</p>
+<pre class="cmd"><span class="d"># установить собранный .vsix</span>
+code --install-extension \
+  vscode-extension/versions/explained-code-2.2.0.vsix --force
+
+<span class="d"># или режим разработки</span>
+<span class="c">cd</span> vscode-extension
+npm install && npm run compile   <span class="d"># затем F5 в VS Code</span></pre>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <a class="brand" href="index.html"><span class="dot">.</span>xc</a>
+    <span style="color:var(--faint)">Explained Code — открытый формат и инструментарий.</span>
+    <div class="cols">
+      <a href="cli.html">CLI</a>
+      <a href="agents.html">Агенты</a>
+      <a href="editor.html">Редактор</a>
+      <a href="https://github.com/Levos06/xc">GitHub</a>
+    </div>
+  </div>
+</footer>
+
+<script src="demo.js"></script>
+</body>
+</html>

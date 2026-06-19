@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Инструменты агентов — .xc</title>
+<meta name="description" content="MCP-инструменты для ИИ-агентов поверх .xc, включая Teach-Back барьер против vibe coding." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,500;1,9..144,600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<nav class="top">
+  <div class="wrap">
+    <a class="brand" href="index.html"><span class="dot">.</span>xc</a>
+    <div class="links">
+      <a href="index.html#idea">Идея</a>
+      <a href="index.html#philosophy">Философия</a>
+      <a class="prod" href="cli.html">CLI</a>
+      <a class="prod active" href="agents.html">Агенты</a>
+      <a class="prod" href="editor.html">Редактор</a>
+      <a class="navbtn" href="https://github.com/Levos06/xc">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<header class="phero">
+  <div class="wrap">
+    <div class="kicker">02 · MCP</div>
+    <h1>Инструменты<br>для агентов.</h1>
+    <p class="lead">Набор атомарных операций для автономных ИИ-агентов через Model Context Protocol.
+      Каждый инструмент также импортируется как обычная Python-функция — для LangChain или любого хоста.</p>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <div class="eyebrow">Четыре инструмента</div>
+    <h2>Безопасная работа агента с <code>.xc</code>.</h2>
+    <div class="grid2" style="margin-top:8px;">
+      <div class="card">
+        <h3><code style="font-size:15px;color:var(--accent-ink)">extract_code_layer</code></h3>
+        <p>Возвращает только исполняемый код — готовый для компилятора или интерпретатора.</p>
+      </div>
+      <div class="card">
+        <h3><code style="font-size:15px;color:var(--accent-ink)">update_explanation_block</code></h3>
+        <p>Изолированно переписывает одно объяснение и возвращает доказательство, что хэш кода не изменился.</p>
+      </div>
+      <div class="card">
+        <h3><code style="font-size:15px;color:var(--accent-ink)">generate_explained_artifact</code></h3>
+        <p>Собирает валидный <code>.xc</code> из монолитного кода и объяснений с диапазонами строк — <b>отказываясь</b> выдавать код без объяснения (Planning Conditioning).</p>
+      </div>
+      <div class="card">
+        <h3><code style="font-size:15px;color:var(--accent-ink)">explanation_gate</code></h3>
+        <p>Когнитивный барьер <b>Teach-Back</b>: модель-судья (T=0.1) оценивает объяснение человека по таксономии SOLO и разрешает мердж только выше порога.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap narrow">
+    <div class="eyebrow">Teach-Back</div>
+    <h2>Барьер против «vibe coding».</h2>
+    <p class="lead" style="font-size:18px;color:var(--ink-soft)">
+      Если код сгенерирован ИИ, <code>explanation_gate</code> просит человека объяснить логику и
+      граничные условия своими словами. Локальная модель-судья оценивает ответ по
+      <b>SOLO-таксономии</b> и пропускает мердж только тогда, когда понимание реально
+      продемонстрировано. Без ключа API работает прозрачная офлайн-эвристика.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap narrow">
+    <div class="eyebrow">Подключение</div>
+    <h2>Запустить MCP-сервер.</h2>
+    <p class="sub">Регистрируется в Cursor или Claude Desktop как обычный MCP-сервер.</p>
+<pre class="cmd"><span class="c">cd</span> mcp
+../core/.venv/bin/pip install "mcp>=1.2.0"   <span class="d"># опц.: anthropic для судьи</span>
+../core/.venv/bin/python -m xc_mcp.server     <span class="d"># stdio-транспорт</span></pre>
+    <p style="margin-top:18px;color:var(--muted)">Пример прямого вызова из Python/LangChain — в
+      <a href="https://github.com/Levos06/xc/blob/feat/xc-mvp/mcp/examples/langchain_client.py"><code>mcp/examples/langchain_client.py</code></a>.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <a class="brand" href="index.html"><span class="dot">.</span>xc</a>
+    <span style="color:var(--faint)">Explained Code — открытый формат и инструментарий.</span>
+    <div class="cols">
+      <a href="cli.html">CLI</a>
+      <a href="agents.html">Агенты</a>
+      <a href="editor.html">Редактор</a>
+      <a href="https://github.com/Levos06/xc">GitHub</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,19 +1,21 @@
 ---
-xc_spec: "1.0"
+xc_spec: "2.0"
 language: "python"
 module: "core.auth"
-always_apply: true
 ---
 
-# [EXPLANATION: main_logic]
+# [EXPLANATION: overview]
+lines: 1-12
 ## Архитектурный контекст
-Слой выполняет валидацию сессионных токенов.
+Слой выполняет валидацию сессионных токенов и демонстрирует запуск.
 
-## Инварианты безопасности:
-* Токен не должен обрабатываться, если время жизни (`exp`) истекло.
-* Отсутствие поля `exp` трактуется как невалидный токен (fail-closed).
+# [EXPLANATION: exp_invariant]
+lines: 4-7
+## Инвариант истечения токена
+Отсутствие поля `exp` или истёкшее время жизни (`exp <= now`) трактуется как
+невалидный токен (fail-closed).
 
-# [CODE: main_logic]
+# [CODE: MONOLITH]
 ```python
 import time
 
@@ -25,7 +27,6 @@ def verify_session(token_data: dict) -> bool:
 
 
 if __name__ == "__main__":
-    # Демонстрация: токен с истёкшим сроком отвергается.
     print("expired ->", verify_session({"exp": 0}))
     print("valid   ->", verify_session({"exp": time.time() + 3600}))
 ```

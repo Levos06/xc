@@ -1,133 +1,264 @@
-# `.xc` — Explained Code Ecosystem (MVP)
+# Explained Code (`.xc`)
 
-A text format and toolchain that keep executable code and its semantic layer
-(architectural context, invariants, requirements) in **one physical file** —
-without the "two parsers" pathology, without diff noise, and with the
-explanation physically *before* the code so model generation is conditioned by
-the plan first.
+**One file for the code and the reasoning behind it.** `.xc` keeps executable
+source and its semantic layer — architectural context, invariants, requirements,
+edge cases — in a single, version-control-friendly text file, without mixing the
+two in a way that confuses tools, models, or `git`.
 
-This repository implements the three product layers from the spec:
+A `.xc` file is a valid Markdown document with a fixed block structure. The
+**code is one monolithic block** at the end of the file; the prose lives above
+it as a sequence of explanation blocks, each bound to **1-indexed line ranges**
+of the code (`lines: 5-8`). Tooling can losslessly pull out the pure code, edit
+the prose without touching the code, and render the two side by side — line for
+line. Ranges may overlap freely, so the same code can carry both a high-level
+note and a per-line annotation.
 
-| Layer | Path | What it is |
-|-------|------|------------|
-| 1. Core + CLI | [`core/`](core/) | `xc-cli` — `init` / `extract` / `run` / `validate` |
-| 2. Agent tools | [`mcp/`](mcp/) | MCP server with 4 atomic tools for autonomous agents |
-| 3. IDE display | [`vscode-extension/`](vscode-extension/) | Split-view editor + isolated git diff |
-
-## The format (Markdown-First, Variant A)
-
-A `.xc` file is a valid Markdown document with fixed line boundaries:
-
-```markdown
+````markdown
 ---
-xc_spec: "1.0"
+xc_spec: "2.0"
 language: "python"
 module: "core.auth"
-always_apply: true
 ---
 
-# [EXPLANATION: main_logic]
-## Архитектурный контекст
-...invariants, requirements, edge cases...
+# [EXPLANATION: overview]
+lines: 1-7
+## Architectural context
+Validates session tokens before a request is served.
 
-# [CODE: main_logic]
-` ` `python
+# [EXPLANATION: exp_invariant]
+lines: 4-7
+## Security invariants
+* A token with no `exp` field is rejected (fail-closed).
+* An expired token (`exp <= now`) is never accepted.
+
+# [CODE: MONOLITH]
+```python
 import time
-def verify_session(token_data: dict) -> bool: ...
-` ` `
-```
 
-**Design principles enforced by the tooling**
+def verify_session(token: dict) -> bool:
+    if "exp" not in token:
+        return False
+    return token["exp"] > time.time()
+```
+````
+
+The repository contains three components that share one parser:
+
+| Component | Path | Summary |
+|-----------|------|---------|
+| **Core & CLI** | [`core/`](core/) | `xc-cli` — `init`, `extract`, `run`, `validate` |
+| **Agent tools (MCP)** | [`mcp/`](mcp/) | Atomic operations for AI agents over the Model Context Protocol |
+| **IDE extension** | [`vscode-extension/`](vscode-extension/) | Split-view editor + isolated `git` diff for VS Code / Cursor |
+
+---
+
+## Why `.xc`
+
+Putting documentation inside code is old; doing it so that **automated tooling
+and language models stay reliable** is the point of this format. Three design
+principles drive every decision:
 
 - **Layer isolation (LangSec).** A single, line-oriented, *total* recognizer
-  classifies every line. Code inside a fence is never re-parsed as markup and
-  markup is never parsed as code. Markup and code occupy disjoint line ranges.
-- **Planning Conditioning.** `EXPLANATION` blocks physically precede their
-  `CODE` block. `generate_explained_artifact` *refuses* to emit an artifact
-  without an explanation.
-- **No diff noise.** `extract` is a pure function of the code fences only;
-  prose edits cannot change the extracted code or its hash. A git `textconv`
-  driver makes `git diff` show only the code layer.
+  classifies every line of the file. Code inside a fence is never re-parsed as
+  Markdown, and Markdown is never parsed as code. The two languages occupy
+  disjoint line ranges, which avoids the "two parsers disagree" class of bugs.
+
+- **Planning conditioning.** The explanation and invariants are physically
+  written *before* the code they describe. When a model generates an `.xc`
+  artifact, it must commit to the plan and edge cases first, then the
+  implementation — the order that produces better code.
+
+- **No diff noise.** Extracting code depends *only* on the contents of `[CODE]`
+  fences, so editing prose can never change the extracted code or its hash. A
+  `git` `textconv` driver makes `git diff` show only the code layer, so prose
+  edits don't clutter review.
+
+These are not aspirations — they are enforced and tested (see *Guarantees*).
 
 ---
 
-## Layer 1 — `xc-cli`
+## The format
+
+A `.xc` file has three zones, top to bottom:
+
+1. An optional YAML **frontmatter** block (`---` … `---`) with metadata such as
+   `language` and `module`.
+2. A **prose layer**: a sequence of `# [EXPLANATION: <id>]` blocks. Each is
+   immediately followed by a `lines: <ranges>` marker (`lines: 12`,
+   `lines: 5-8, 12-15`) binding it to 1-indexed line ranges of the code, then
+   Markdown content (context, invariants, checklists, tables, LaTeX math).
+3. A **monolithic code block**: exactly one `# [CODE: MONOLITH]` fenced block
+   holding the entire program.
+
+Because the code is one clean block, `extract` is trivial and the result is an
+ordinary source file. Ranges are independent records, so they may overlap — a
+line can be covered by several explanations at once.
+
+The recognizer is resilient: a file truncated mid-stream (e.g. by an
+interrupted LLM response) still parses up to the last valid boundary, and
+`validate` reports where that is.
+
+---
+
+## Component 1 — `xc-cli`
+
+A deterministic, local command-line tool. Requires Python ≥ 3.9.
 
 ```bash
 cd core
-python3 -m venv .venv && .venv/bin/pip install -e .   # installs `xc-cli`
-
-xc-cli init mymodule.py            # -> mymodule.xc (explanation stub + code)
-xc-cli extract file.xc             # pure code to stdout (streaming, O(n))
-xc-cli extract file.xc --hash      # SHA-256 of the code layer
-xc-cli run file.xc                 # extract + execute via language runner
-xc-cli validate file.xc           # structural + YAML check, truncation-resilient
+python3 -m venv .venv
+.venv/bin/pip install -e .          # installs the `xc-cli` entry point
 ```
 
-Run the tests: `cd core && .venv/bin/python -m pytest tests/ -q` (14 passing).
+```bash
+xc-cli init mymodule.py             # wrap raw source -> mymodule.xc (with a stub explanation)
+xc-cli extract file.xc              # stream the pure code to stdout (linear time)
+xc-cli extract file.xc --hash       # SHA-256 of the extracted code layer
+xc-cli run file.xc                  # extract + execute via the language's runner
+xc-cli validate file.xc            # structural + YAML validation, with recovery point
+```
 
-## Layer 2 — MCP tools
+`run` chooses an interpreter from the frontmatter `language` (Python, JavaScript,
+TypeScript, Ruby, Bash, …). `extract` is a pure function of the code fences, so
+its output — and `--hash` — are stable across any prose edit.
 
-Four atomic tools, exposed over MCP (FastMCP) **and** importable directly by a
-LangChain/Python host (`from xc_mcp import ...`):
+Tests: `cd core && .venv/bin/python -m pytest tests/ -q`.
 
-- `extract_code_layer` — pure code for a compiler/interpreter.
-- `update_explanation_block` — isolated prose edit; returns proof the code hash
-  is unchanged.
-- `generate_explained_artifact` — plan-first assembly (explanation + invariants
-  before code).
-- `explanation_gate` — **Teach-Back** cognitive gate against vibe-coding: a
-  judge model (`T=0.1`) scores a human's explanation on the **SOLO taxonomy**
-  and allows the merge only at/above a threshold. Falls back to a transparent
-  offline heuristic when no `ANTHROPIC_API_KEY` is set.
+---
+
+## Component 2 — MCP tools
+
+A [Model Context Protocol](https://modelcontextprotocol.io) server exposing four
+atomic tools, so autonomous agents (Cursor, Claude Desktop, LangChain, …) can
+work with `.xc` files safely. Every tool is also importable directly as a Python
+function (`from xc_mcp import …`).
+
+| Tool | Purpose |
+|------|---------|
+| `extract_code_layer` | Return only the executable code (for a compiler/interpreter). |
+| `update_explanation_block` | Rewrite one explanation in isolation; returns proof the code hash is unchanged. |
+| `generate_explained_artifact` | Assemble a valid v2 `.xc` artifact from monolithic code + line-range explanations, **refusing** to emit code without at least one explanation (planning conditioning). |
+| `explanation_gate` | A **Teach-Back** gate against "vibe coding": a judge model (temperature 0.1) scores a human's explanation on the SOLO taxonomy and only allows a merge above a threshold. Falls back to a transparent offline heuristic with no API key. |
 
 ```bash
 cd mcp
-../core/.venv/bin/pip install "mcp>=1.2.0"     # + optional: anthropic
-../core/.venv/bin/python examples/langchain_client.py   # live demo
+../core/.venv/bin/pip install "mcp>=1.2.0"   # optional: anthropic (enables the LLM judge)
+../core/.venv/bin/python -m xc_mcp.server     # run over stdio
 ```
 
-Register with Cursor / Claude Desktop using
-[`mcp/mcp_config.example.json`](mcp/mcp_config.example.json). Tests:
-`core/.venv/bin/python -m pytest mcp/tests/ -q` (6 passing).
+Register with an MCP client using
+[`mcp/mcp_config.example.json`](mcp/mcp_config.example.json). A runnable
+direct-import demo is in [`mcp/examples/langchain_client.py`](mcp/examples/langchain_client.py).
 
-## Layer 3 — VS Code / Cursor extension
+Tests: `core/.venv/bin/python -m pytest mcp/tests/ -q`.
+
+---
+
+## Component 3 — VS Code / Cursor extension
+
+Turns the physical `.xc` file into a comfortable two-pane editing experience.
+See [`vscode-extension/README.md`](vscode-extension/README.md) for full details.
+
+- **Split view.** Left: the monolithic code with syntax highlighting and line
+  numbers, editable as a normal file — edits are written back to the code block
+  and every explanation's `lines:` range is automatically shifted to follow.
+  Right: the prose layer in one of two modes.
+- **Grid mode (Excel-style).** The right panel is ruled into rows aligned 1:1
+  with code lines; an explanation renders from its start line and flows down
+  until the next block begins. Scroll is *monolithic* — both panels share a
+  single line index, so visual desync is impossible. Blocks collapse to one
+  row (revealing what's underneath), and several blocks starting on the same
+  line become tabs.
+- **Sticky-context mode.** The right panel shows cards only for the block(s)
+  covering the focused code line, fading as you move.
+- **Authoring in place.** Edit any explanation (id, line range, Markdown) in a
+  floating editor; *Describe selection* attaches prose to selected code lines;
+  delete with undo (Ctrl/Cmd+Z). Tables and LaTeX math (`$…$` / `$$…$$`) render
+  in both modes.
+- **Resizable & swappable panes**, persisted per file.
+- **Isolated git diff.** Dedicated commands open VS Code's native diff over a
+  single layer (code-only or explanation-only), HEAD ↔ working tree.
+
+Install the packaged build:
+
+```bash
+code --install-extension vscode-extension/versions/explained-code-<version>.vsix
+```
+
+Or develop it:
 
 ```bash
 cd vscode-extension
 npm install
-npm run compile        # bundles to out/extension.js
-npm run test:parser    # TS recognizer parity tests
-# Press F5 in VS Code to launch an Extension Development Host, open a .xc file.
+npm run compile          # bundle extension + webview
+npm run test:parser      # recognizer parity tests
+npm run package          # build versions/explained-code-<version>.vsix
+# Press F5 in VS Code to launch an Extension Development Host; open a .xc file.
 ```
 
-- **Split view:** editable pure code (left, native-feeling), rendered Markdown
-  explanations (right). Editing the left pane splices code back into the `.xc`
-  file without touching a single explanation line.
-- **Focus sync:** moving the caret into a function/block on the left scrolls and
-  highlights the matching `block_id` on the right.
-- **Isolated git diff:** the `XC: Diff Code Layer` / `XC: Diff Explanation
-  Layer` commands open native diff editors over a single layer only.
+---
 
-## Git integration — kill diff noise at the source
+## Git integration — keep prose out of code review
 
 ```bash
 git-integration/setup-xc-diff.sh /path/to/your/repo
 ```
 
-Configures a `textconv` diff driver (`xc-cli extract`) + `.gitattributes`, so
-`git diff` / code review on `.xc` files shows **only the code layer**.
-Demonstrated: a prose-only edit yields an *empty* `git diff`.
+Installs a `textconv` diff driver (`xc-cli extract`) and the matching
+`.gitattributes` entry, so `git diff` and code review on `.xc` files show **only
+the code layer**. An explanation-only edit produces an empty `git diff`.
 
 ---
 
-## Acceptance criteria — status
+## Guarantees
 
-1. **`xc-cli run script.xc` executes valid Python** — ✅ `test_cli_run_executes`,
-   and `xc-cli run core/examples/auth.xc`.
-2. **Explanation edits don't change the code / its hash** — ✅
-   `test_explanation_edit_keeps_code_hash_stable`; git textconv shows empty diff.
-3. **Parser resilient to truncated LLM streams** — ✅ `validate` reports the
-   recoverable prefix line; `test_validate_detects_unclosed_fence`.
-4. **MCP tools importable & callable by an autonomous agent** — ✅ FastMCP server
-   lists all 4 tools; `examples/langchain_client.py` calls them directly.
+These properties are enforced by the implementation and covered by tests:
+
+1. **Executable.** Any `.xc` with syntactically valid code runs via
+   `xc-cli run`.
+2. **Prose edits never change code.** Editing an `[EXPLANATION]` block leaves
+   every byte of the extracted code — and its SHA-256 — identical. The git
+   `textconv` driver demonstrates this with an empty diff.
+3. **Robust to truncation.** A file cut off mid-stream still parses to the last
+   valid boundary; `validate` reports the recoverable prefix.
+4. **Agent-ready.** The MCP tools import and run from an autonomous agent or a
+   plain Python/LangChain host.
+
+---
+
+## Repository layout
+
+```
+core/              Python library + xc-cli
+  xc/parser.py     single-pass, total, O(n) recognizer (shared semantics)
+  xc/core.py       extract / init / run / validate
+  xc/edit.py       isolated explanation edits (hash-stable)
+mcp/               MCP server + tools (FastMCP) and judge
+vscode-extension/  TypeScript extension (parser mirrored in src/xcParser.ts)
+  versions/        released .vsix packages
+git-integration/   textconv setup script
+```
+
+The CLI (Python) and the extension (TypeScript) keep byte-for-byte agreement on
+where code lives by mirroring the same line-oriented recognizer.
+
+---
+
+## Development
+
+```bash
+# Core + MCP (Python)
+cd core && python3 -m venv .venv && .venv/bin/pip install -e '.[test]'
+.venv/bin/pip install "mcp>=1.2.0"
+.venv/bin/python -m pytest tests/ ../mcp/tests/ -q
+
+# Extension (TypeScript)
+cd ../vscode-extension && npm install
+npm run typecheck && npm run test:parser
+```
+
+---
+
+## License
+
+See [LICENSE](LICENSE).

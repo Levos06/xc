@@ -28,12 +28,6 @@ def demo_direct():
     art = generate_explained_artifact(
         language="python",
         module="core.auth",
-        explanation_markdown=(
-            "## Архитектурный контекст\n"
-            "Валидация сессионного токена.\n\n"
-            "## Инварианты\n"
-            "* fail-closed при отсутствии `exp`."
-        ),
         code=(
             "import time\n\n"
             "def verify_session(t):\n"
@@ -41,7 +35,12 @@ def demo_direct():
             "        return False\n"
             "    return t['exp'] > time.time()\n"
         ),
-        edge_cases=["missing exp -> False", "expired exp -> False"],
+        explanations=[
+            {"block_id": "overview", "lines": "1-6",
+             "markdown": "## Архитектурный контекст\nВалидация сессионного токена."},
+            {"block_id": "fail_closed", "lines": "4-5",
+             "markdown": "## Инвариант\nfail-closed при отсутствии `exp`."},
+        ],
     )
     print(art["xc_content"])
 

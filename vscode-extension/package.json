@@ -2,7 +2,7 @@
   "name": "explained-code",
   "displayName": "Explained Code (.xc)",
   "description": "Split-view editor and isolated git diff for the .xc (Explained Code) Markdown-First format.",
-  "version": "1.6.0",
+  "version": "2.2.0",
   "publisher": "xc-ecosystem",
   "repository": { "type": "git", "url": "https://github.com/Levos06/xc.git" },
   "engines": {
