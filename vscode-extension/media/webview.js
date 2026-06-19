@@ -10,7 +10,6 @@ import bash from "highlight.js/lib/languages/bash";
 import cpp from "highlight.js/lib/languages/cpp";
 import go from "highlight.js/lib/languages/go";
 import rust from "highlight.js/lib/languages/rust";
-import { rowOwners } from "../src/xcParser";
 
 hljs.registerLanguage("python", python);
 hljs.registerLanguage("javascript", javascript);
@@ -179,12 +178,7 @@ function activeOf(startLine, group) {
 }
 function renderGrid() {
   const groups = groupsByStart();
-  const anchors = [];
-  groups.forEach(function (group, startLine) {
-    const act = activeOf(startLine, group);
-    anchors.push({ startLine: startLine, activeId: act.blockId, collapsed: collapsed.has(act.blockId) });
-  });
-  const owner = rowOwners(anchors, codeLineCount);
+  const starts = Array.from(groups.keys()).sort(function (a, b) { return a - b; });
 
   // total height tracks the code editor exactly -> 1:1 scroll lock
   const totalH = codeEl.scrollHeight || (PAD * 2 + codeLineCount * lineHeight);
@@ -193,80 +187,86 @@ function renderGrid() {
   gridLines.style.height = codeLineCount * lineHeight + "px";
   gridLines.style.background =
     "repeating-linear-gradient(to bottom, transparent 0, transparent " + (lineHeight - 1) + "px, var(--vscode-panel-border) " + (lineHeight - 1) + "px, var(--vscode-panel-border) " + lineHeight + "px)";
-  gridLines.style.opacity = ".25";
+  gridLines.style.opacity = ".5";
 
-  // remove old cells (keep gridLines)
   Array.from(gridInner.querySelectorAll(".cell")).forEach(function (c) { c.remove(); });
 
-  // segments: consecutive equal owners
-  let row = 1;
-  while (row <= codeLineCount) {
-    const id = owner[row];
-    let end = row;
-    while (end + 1 <= codeLineCount && owner[end + 1] === id) end++;
-    if (id) renderCell(id, row, end - row + 1, groups);
-    row = end + 1;
+  // Each block owns a strict span [start_i, start_{i+1}). The next block ends
+  // the previous one — so a collapsed block leaves empty grid, never reveals
+  // a neighbour underneath it.
+  for (let i = 0; i < starts.length; i++) {
+    const s = starts[i];
+    const next = i + 1 < starts.length ? starts[i + 1] : codeLineCount + 1;
+    const act = activeOf(s, groups.get(s));
+    renderCell(act.blockId, s, next - s, groups);
   }
 }
-function renderCell(blockId, startRow, rowCount, groups) {
+function renderCell(blockId, startRow, span, groups) {
   const b = explanations.find(function (x) { return x.blockId === blockId; });
   if (!b) return;
-  const isHeader = startRow === b.startLine;
-  const isExpanded = isHeader && blockId === expandedId;
+  const isCollapsed = collapsed.has(blockId);
+  const isExpanded = blockId === expandedId && !isCollapsed;
+  const spanPx = span * lineHeight;
+
   const cell = document.createElement("div");
   cell.className = "cell" + (isExpanded ? " expanded" : "");
   cell.setAttribute("data-block-id", blockId);
   cell.style.top = PAD + (startRow - 1) * lineHeight + "px";
-  if (!isExpanded) cell.style.height = rowCount * lineHeight + "px";
+  if (isExpanded) {
+    // float to full content height over the rows below
+  } else if (isCollapsed) {
+    cell.style.height = lineHeight + "px";
+  } else {
+    // grow to fit the text, but never past the next block (real grid shows below)
+    cell.style.maxHeight = spanPx + "px";
+  }
 
   const inner = document.createElement("div");
   inner.className = "cell-inner";
-  // offset content so a continuation segment shows the right slice
-  inner.style.marginTop = -(startRow - b.startLine) * lineHeight + "px";
 
-  if (isHeader) {
-    const head = document.createElement("div");
-    head.className = "cell-head";
-    const group = groups.get(b.startLine) || [b];
-    if (group.length > 1) {
-      const tabs = document.createElement("div");
-      tabs.className = "cell-tabs";
-      group.forEach(function (g) {
-        const t = document.createElement("span");
-        t.className = "cell-tab" + (g.blockId === blockId ? " active" : "");
-        t.textContent = g.blockId;
-        t.addEventListener("click", function (ev) { ev.stopPropagation(); activeTab.set(b.startLine, g.blockId); renderGrid(); });
-        tabs.appendChild(t);
-      });
-      head.appendChild(tabs);
-    } else {
-      const lab = document.createElement("div");
-      lab.className = "block-id";
-      lab.textContent = blockId;
-      head.appendChild(lab);
-    }
-    const actions = document.createElement("div");
-    actions.className = "cell-actions";
-    const col = document.createElement("button");
-    col.className = "cell-btn";
-    col.textContent = collapsed.has(blockId) ? "▸" : "▾";
-    col.title = "Свернуть / развернуть";
-    col.addEventListener("click", function (ev) { ev.stopPropagation(); if (collapsed.has(blockId)) collapsed.delete(blockId); else collapsed.add(blockId); renderGrid(); });
-    const ed = document.createElement("button");
-    ed.className = "cell-btn";
-    ed.innerHTML = PENCIL_SVG;
-    ed.title = "Редактировать";
-    ed.addEventListener("click", function (ev) { ev.stopPropagation(); enterEdit(blockId); });
-    const add = document.createElement("button");
-    add.className = "cell-btn";
-    add.textContent = "+";
-    add.title = "Добавить блок на этой строке";
-    add.addEventListener("click", function (ev) { ev.stopPropagation(); vscode.postMessage({ type: "insertBlock", line: b.startLine }); });
-    actions.appendChild(col); actions.appendChild(ed); actions.appendChild(add);
-    head.appendChild(actions);
-    inner.appendChild(head);
+  const head = document.createElement("div");
+  head.className = "cell-head";
+  const group = groups.get(b.startLine) || [b];
+  if (group.length > 1) {
+    const tabs = document.createElement("div");
+    tabs.className = "cell-tabs";
+    group.forEach(function (g) {
+      const t = document.createElement("span");
+      t.className = "cell-tab" + (g.blockId === blockId ? " active" : "");
+      t.textContent = g.blockId;
+      t.addEventListener("click", function (ev) { ev.stopPropagation(); activeTab.set(b.startLine, g.blockId); expandedId = null; renderGrid(); });
+      tabs.appendChild(t);
+    });
+    head.appendChild(tabs);
+  } else {
+    const lab = document.createElement("div");
+    lab.className = "block-id";
+    lab.textContent = blockId;
+    head.appendChild(lab);
   }
-  if (isExpanded || !(isHeader && collapsed.has(blockId))) {
+  const actions = document.createElement("div");
+  actions.className = "cell-actions";
+  const col = document.createElement("button");
+  col.className = "cell-btn";
+  col.textContent = isCollapsed ? "▸" : "▾";
+  col.title = "Свернуть / развернуть";
+  col.addEventListener("click", function (ev) {
+    ev.stopPropagation();
+    if (isCollapsed) collapsed.delete(blockId);
+    else { collapsed.add(blockId); if (expandedId === blockId) expandedId = null; }
+    renderGrid();
+  });
+  const ed = document.createElement("button");
+  ed.className = "cell-btn"; ed.innerHTML = PENCIL_SVG; ed.title = "Редактировать";
+  ed.addEventListener("click", function (ev) { ev.stopPropagation(); enterEdit(blockId); });
+  const add = document.createElement("button");
+  add.className = "cell-btn"; add.textContent = "+"; add.title = "Добавить блок на этой строке";
+  add.addEventListener("click", function (ev) { ev.stopPropagation(); vscode.postMessage({ type: "insertBlock", line: b.startLine }); });
+  actions.appendChild(col); actions.appendChild(ed); actions.appendChild(add);
+  head.appendChild(actions);
+  inner.appendChild(head);
+
+  if (!isCollapsed) {
     const body = document.createElement("div");
     body.className = "md";
     body.innerHTML = b.html;
@@ -275,16 +275,15 @@ function renderCell(blockId, startRow, rowCount, groups) {
   cell.appendChild(inner);
   cell.addEventListener("mouseenter", function () { const sp = blockSpan(b); if (sp) showBand(sp); });
   cell.addEventListener("mouseleave", function () { showBand(null); });
-  // click the cell body (not a control) toggles full expansion
   cell.addEventListener("click", function (ev) {
     if (ev.target && ev.target.closest && ev.target.closest(".cell-btn, .cell-tab")) return;
     ev.stopPropagation();
-    expandedId = expandedId === blockId ? null : blockId;
+    if (collapsed.has(blockId)) { collapsed.delete(blockId); expandedId = blockId; }
+    else expandedId = expandedId === blockId ? null : blockId;
     renderGrid();
   });
   gridInner.appendChild(cell);
   if (isExpanded) {
-    // grow the scrollable area so the (now taller) card's tail is reachable
     const need = cell.offsetTop + cell.offsetHeight + 16;
     if (need > parseFloat(gridInner.style.height || "0")) gridInner.style.height = need + "px";
   }
